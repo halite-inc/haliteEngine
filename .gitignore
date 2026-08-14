@@ -13,6 +13,10 @@ DerivedData/
 project.xcworkspace/xcuserdata/
 *.xcuserdata/
 
+# Archives & Installers
+*.dmg
+*.zip
+
 # Agent / Tooling outputs
 .codex/
 .gemini/
