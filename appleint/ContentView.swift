@@ -4025,7 +4025,7 @@ struct ContentView: View {
                     .frame(width: 48, height: 48)
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("AppleInt for macOS")
+                        Text("Halite for macOS")
                             .font(.title3.bold())
                         Text("Version \(updateManager.currentVersion) (Build \(updateManager.currentBuild))")
                             .font(.subheadline.monospaced())
@@ -4096,7 +4096,7 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("You're up to date!")
                             .font(.headline)
-                        Text("AppleInt v\(version) is currently the newest version available.")
+                        Text("Halite v\(version) is currently the newest version available.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

@@ -18,13 +18,16 @@ struct appleintApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("Halite") {
             ContentView()
                 .environment(manager)
                 .preferredColorScheme(preferredColorScheme)
                 .onChange(of: scenePhase) { _, phase in
                     if phase != .active { manager.flushThreadPersistence() }
                 }
+        }
+        .commands {
+            SidebarCommands()
         }
     }
 

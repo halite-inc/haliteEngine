@@ -212,7 +212,7 @@ private actor MCPProcessClient {
                 "tools": [:]
             ],
             "clientInfo": [
-                "name": "appleint",
+                "name": "Halite",
                 "version": "1.0.0"
             ]
         ]

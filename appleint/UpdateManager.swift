@@ -119,7 +119,7 @@ public final class UpdateManager: ObservableObject {
 
         var request = URLRequest(url: url)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("appleint-Updater/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Halite-Updater/\(currentVersion)", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 15
 
         do {
@@ -191,7 +191,7 @@ public final class UpdateManager: ObservableObject {
 
                 do {
                     let downloadsDir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
-                    let destinationURL = downloadsDir.appendingPathComponent("appleint-\(release.version).zip")
+                    let destinationURL = downloadsDir.appendingPathComponent("Halite-\(release.version).zip")
                     try? FileManager.default.removeItem(at: destinationURL)
                     try FileManager.default.copyItem(at: tempLocalURL, to: destinationURL)
 
