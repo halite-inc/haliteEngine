@@ -2,7 +2,10 @@
 set -euo pipefail
 
 # ==============================================================================
-# AppleInt Release Script
+# Halite Automated Release Script
+# Builds Halite.app, generates Halite.dmg & Halite-macos.zip, tags git,
+# and publishes the official GitHub Release with assets attached.
+#
 # Usage:
 #   ./scripts/release.sh <version> "<improvements_and_fixes>"
 # Example:
@@ -24,32 +27,53 @@ VERSION="${VERSION#v}"
 TAG="v${VERSION}"
 
 if [ -z "$CHANGELOG" ]; then
-  CHANGELOG="### Improvements & Fixes in ${TAG}\n- General performance and stability updates."
+  CHANGELOG="### Improvements & Fixes in ${TAG}
+- General performance and stability updates."
 fi
 
 echo "🚀 Preparing release ${TAG}..."
 
-# 1. Update CFBundleShortVersionString in project or Xcode configuration if desired
+# 1. Stage and commit any unstaged changes
 echo "📦 Staging and committing changes..."
 git add .
 if ! git diff --cached --quiet; then
   git commit -m "Release ${TAG}: ${CHANGELOG}"
 fi
 
-# 2. Create git tag with release notes
-echo "🏷️ Creating git tag ${TAG}..."
+# 2. Build Release binary with Xcode
+echo "🔨 Building Release application binary with xcodebuild..."
+xcodebuild -project appleint.xcodeproj -scheme appleint -configuration Release -destination "platform=macOS" -derivedDataPath build/DerivedData clean build -quiet
+
+# 3. Create DMG and ZIP distribution packages
+echo "📦 Packaging Halite.dmg and Halite-macos.zip..."
+rm -rf build/dmg_staging Halite.dmg Halite-macos.zip
+mkdir -p build/dmg_staging
+cp -R build/DerivedData/Build/Products/Release/appleint.app build/dmg_staging/Halite.app
+ln -s /Applications build/dmg_staging/Applications
+hdiutil create -volname "Halite" -srcfolder build/dmg_staging -ov -format UDZO Halite.dmg -quiet
+zip -r -y -q Halite-macos.zip build/DerivedData/Build/Products/Release/appleint.app
+
+# 4. Create and push git tag
+echo "🏷️ Creating and pushing git tag ${TAG}..."
 if git rev-parse "$TAG" >/dev/null 2>&1; then
-  echo "⚠️ Tag $TAG already exists locally. Deleting and recreating..."
-  git tag -d "$TAG"
+  git tag -d "$TAG" 2>/dev/null || true
 fi
-
 git tag -a "$TAG" -m "$(echo -e "$CHANGELOG")"
-
-# 3. Push commit and tag to GitHub
-echo "⬆️ Pushing commits and tag to origin main..."
 git push origin main
 git push origin "$TAG" --force
 
-echo "✅ Successfully pushed ${TAG} to GitHub!"
-echo "✨ GitHub Actions will now automatically build the macOS app and publish the release with your improvements & fixes."
+# 5. Create or update GitHub Release with DMG & ZIP attached
+echo "🌐 Publishing GitHub Release ${TAG} with Halite.dmg attached..."
+if command -v gh >/dev/null 2>&1; then
+  if gh release view "$TAG" >/dev/null 2>&1; then
+    gh release upload "$TAG" Halite.dmg Halite-macos.zip --clobber
+    gh release edit "$TAG" --title "Halite ${TAG}" --notes "$(echo -e "$CHANGELOG")"
+  else
+    gh release create "$TAG" Halite.dmg Halite-macos.zip \
+      --title "Halite ${TAG}" \
+      --notes "$(echo -e "$CHANGELOG")"
+  fi
+fi
+
+echo "✅ Successfully published ${TAG} to GitHub with Halite.dmg!"
 echo "🔗 View releases at: https://github.com/halite-inc/haliteEngine/releases"
