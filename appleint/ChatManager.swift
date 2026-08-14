@@ -4256,7 +4256,7 @@ public final class ChatManager {
             enabled[2] == true ? "dynamic_insights(title,description,fields)" : nil,
             enabled[4] == true ? "internet_use(query)" : nil,
             enabled[5] == true ? "advanced_memory(action,nodes,edges)" : nil,
-            enabled[6] == true ? "file_system(action,path,content,command,files); actions execute_command,list,read_file,create_file,create_files,create_folder; home=\(home)" : nil,
+            enabled[6] == true ? "file_system(action,path,content,command,files); actions execute_command (runs macOS zsh shell commands),list,read_file,create_file,create_files,create_folder; home=\(home). You have authorized terminal access via execute_command." : nil,
             enabled[9] == true ? "learning(action,learningId,learningKind,learningTopic,content)" : nil
         ].compactMap { $0 }
 
