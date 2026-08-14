@@ -1,0 +1,90 @@
+name: Build & Release macOS App
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release Version (e.g. 1.0.1)'
+        required: true
+        default: '1.0.1'
+      title:
+        description: 'Release Title'
+        required: false
+        default: ''
+      changelog:
+        description: 'Improvements and Fixes (Release Notes)'
+        required: true
+        default: |
+          ### Improvements & Fixes
+          - Added new capabilities
+          - Stability and performance improvements
+
+jobs:
+  build-and-release:
+    name: Build & Deploy Release
+    runs-on: macos-14
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app || sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build macOS App
+        run: |
+          set -euo pipefail
+          echo "Building appleint Release..."
+          xcodebuild -project appleint.xcodeproj \
+            -scheme appleint \
+            -configuration Release \
+            -destination "platform=macOS" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+          APP_PATH=$(find build/DerivedData/Build/Products/Release -name "appleint.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find build/DerivedData/Build/Products -name "appleint.app" -type d | head -n 1)
+          fi
+
+          echo "Found app at: $APP_PATH"
+          cp -R "$APP_PATH" ./appleint.app
+          zip -r -y appleint-macos.zip appleint.app
+
+      - name: Prepare Release Info
+        id: release_info
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="v${{ inputs.version }}"
+            TITLE="${{ inputs.title }}"
+            if [ -z "$TITLE" ]; then
+              TITLE="Release $TAG"
+            fi
+            echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+            echo "TITLE=$TITLE" >> "$GITHUB_OUTPUT"
+          else
+            TAG="${{ github.ref_name }}"
+            TITLE="Release $TAG"
+            echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+            echo "TITLE=$TITLE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_info.outputs.TAG }}
+          name: ${{ steps.release_info.outputs.TITLE }}
+          body: ${{ inputs.changelog || github.event.head_commit.message }}
+          files: appleint-macos.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -253,6 +253,7 @@ struct ContentView: View {
         case tools = "Tools & Modes"
         case apiKeys = "Configure APIs"
         case models = "Manage Models"
+        case updates = "Updates"
         
         var id: String { rawValue }
         
@@ -263,6 +264,7 @@ struct ContentView: View {
             case .tools: return "gearshape.2.fill"
             case .apiKeys: return "key.fill"
             case .models: return "cpu.fill"
+            case .updates: return "arrow.triangle.2.circlepath.circle.fill"
             }
         }
         
@@ -273,6 +275,7 @@ struct ContentView: View {
             case .tools: return .orange
             case .apiKeys: return .green
             case .models: return .red
+            case .updates: return .cyan
             }
         }
     }
@@ -3693,6 +3696,48 @@ struct ContentView: View {
                             .cornerRadius(12)
                             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
                             
+                            // Software Updates Quick Card
+                            VStack(alignment: .leading, spacing: 14) {
+                                HStack {
+                                    Label("Software Updates", systemImage: "arrow.triangle.2.circlepath.circle.fill")
+                                        .font(.headline)
+                                        .foregroundStyle(.cyan)
+                                    Spacer()
+                                    Text("v\(UpdateManager.shared.currentVersion) (Build \(UpdateManager.shared.currentBuild))")
+                                        .font(.caption.monospaced().weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Capsule().fill(Color.secondary.opacity(0.1)))
+                                }
+
+                                HStack(spacing: 12) {
+                                    Text("Keep appleint updated to access latest features, model improvements, and fixes.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Button {
+                                        withAnimation { selectedSettingsTab = .updates }
+                                        Task { await UpdateManager.shared.checkForUpdates() }
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            if UpdateManager.shared.state.isChecking {
+                                                ProgressView().controlSize(.small)
+                                            } else {
+                                                Image(systemName: "arrow.clockwise")
+                                            }
+                                            Text("Check for Updates")
+                                        }
+                                        .font(.subheadline.weight(.semibold))
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(.cyan)
+                                }
+                            }
+                            .padding(24)
+                            .background(Color.primary.opacity(0.03))
+                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color.secondary.opacity(0.14), lineWidth: 1))
                         case .prePrompts:
                             VStack(alignment: .leading, spacing: 12) {
                                 PrePromptsView(manager: manager, threadId: manager.activeThreadId)
@@ -3939,7 +3984,7 @@ struct ContentView: View {
                                     onRemove: { manager.removeOpenAIModel($0) }
                                 )
                                 
-                                // LM Studio Models Card
+                                 // LM Studio Models Card
                                 modelListCard(
                                     title: "LM Studio Local Models",
                                     icon: "laptopcomputer",
@@ -3953,6 +3998,8 @@ struct ContentView: View {
                                     onRemove: { manager.removeLMStudioModel($0) }
                                 )
                             }
+                        case .updates:
+                            updatesSettingsView
                         }
                     }
                     .padding(28)
@@ -3960,6 +4007,263 @@ struct ContentView: View {
             }
         }
         .frame(width: 820, height: 600)
+    }
+
+    private var updatesSettingsView: some View {
+        let updateManager = UpdateManager.shared
+        return VStack(alignment: .leading, spacing: 20) {
+            // Version Info Header Card
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center, spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(LinearGradient(colors: [.cyan, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                    .frame(width: 48, height: 48)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("AppleInt for macOS")
+                            .font(.title3.bold())
+                        Text("Version \(updateManager.currentVersion) (Build \(updateManager.currentBuild))")
+                            .font(.subheadline.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        Task { await updateManager.checkForUpdates() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if updateManager.state.isChecking {
+                                ProgressView().controlSize(.small)
+                                Text("Checking…")
+                            } else {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                Text("Check for Updates")
+                            }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .foregroundStyle(.white)
+                        .background(Capsule().fill(LinearGradient(colors: [.cyan, .blue], startPoint: .leading, endPoint: .trailing)))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(updateManager.state.isChecking || updateManager.state.isDownloading)
+                }
+
+                if let lastDate = updateManager.lastCheckedDate {
+                    let dateStr = DateFormatter.localizedString(from: lastDate, dateStyle: .medium, timeStyle: .short)
+                    Text("Last checked: \(dateStr)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(24)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color.secondary.opacity(0.14), lineWidth: 1))
+
+            // Dynamic State Card
+            switch updateManager.state {
+            case .idle:
+                EmptyView()
+
+            case .checking:
+                HStack(spacing: 12) {
+                    ProgressView().controlSize(.regular)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Checking for updates…")
+                            .font(.headline)
+                        Text("Connecting to GitHub Releases at github.com/\(updateManager.repoOwner)/\(updateManager.repoName)...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            case .upToDate(let version):
+                HStack(spacing: 14) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.green)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("You're up to date!")
+                            .font(.headline)
+                        Text("AppleInt v\(version) is currently the newest version available.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            case .updateAvailable(let release):
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Text("New Version Available: v\(release.version)")
+                                    .font(.headline.bold())
+                                    .foregroundStyle(.cyan)
+                                if release.isPrerelease {
+                                    Text("Pre-release")
+                                        .font(.caption2.weight(.bold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.orange.opacity(0.2), in: Capsule())
+                                }
+                            }
+                            if let pubDate = release.publishedAt {
+                                Text("Released on \(DateFormatter.localizedString(from: pubDate, dateStyle: .medium, timeStyle: .none))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Spacer()
+
+                        HStack(spacing: 8) {
+                            Button("View on GitHub") {
+                                updateManager.openReleaseWebPage(release: release)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+
+                            Button {
+                                updateManager.downloadUpdate(release: release)
+                            } label: {
+                                Label("Download & Install", systemImage: "arrow.down.circle.fill")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.cyan)
+                            .controlSize(.small)
+                        }
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("IMPROVEMENTS & FIXES")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+
+                        ScrollView {
+                            Text(release.changelog)
+                                .font(.system(size: 13, design: .default))
+                                .foregroundStyle(.primary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 180)
+                    }
+                }
+                .padding(22)
+                .background(Color.cyan.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.cyan.opacity(0.25), lineWidth: 1))
+
+            case .downloading(let progress):
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label("Downloading update…", systemImage: "arrow.down.circle")
+                            .font(.headline)
+                        Spacer()
+                        Text("\(Int(progress * 100))%")
+                            .font(.caption.weight(.bold).monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    ProgressView(value: progress)
+                        .tint(.cyan)
+
+                    Text("The update archive will be saved to your Downloads folder.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(20)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            case .readyToInstall(let fileURL, let release):
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.green)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Update v\(release.version) Ready")
+                                .font(.headline)
+                            Text("Downloaded to \(fileURL.lastPathComponent)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Install Update") {
+                            updateManager.installUpdate(fileURL: fileURL)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                    }
+                }
+                .padding(20)
+                .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            case .error(let errorMsg):
+                HStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.red)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Update check failed")
+                            .font(.headline)
+                            .foregroundStyle(.red)
+                        Text(errorMsg)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Retry") {
+                        Task { await updateManager.checkForUpdates() }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .padding(20)
+                .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+
+            // Preferences Card
+            VStack(alignment: .leading, spacing: 16) {
+                Text("UPDATE PREFERENCES")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+
+                Toggle(isOn: Binding(
+                    get: { updateManager.autoCheckEnabled },
+                    set: { updateManager.autoCheckEnabled = $0 }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Automatically check for updates")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Checks GitHub repository for new releases on app startup.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+            }
+            .padding(20)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
+        }
     }
 
     // Helper sidebar button component
@@ -3997,6 +4301,7 @@ struct ContentView: View {
         case .tools: return "Control real-time search, memory graph, and file system rights."
         case .apiKeys: return "Configure cloud API keys and local server endpoints."
         case .models: return "Add custom model identifiers or organize model drop-down menus."
+        case .updates: return "Check for new releases, view improvements & fixes, and configure auto-updates."
         }
     }
 
