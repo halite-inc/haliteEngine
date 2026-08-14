@@ -133,6 +133,7 @@ struct ContentView: View {
     @AppStorage("appAppearance") private var appAppearance: String = "system"
     @AppStorage("userBubbleAccentColor") private var userBubbleAccentColor: String = "blue"
     @AppStorage("customThemeColorHex") private var customThemeColorHex: String = "#007AFF"
+    @ObservedObject private var updateManager = UpdateManager.shared
     @AppStorage("enableDynamicInsights") private var enableDynamicInsights: Bool = true
     @AppStorage("aiPerformanceMode") private var aiPerformanceMode: String = "Quality"
     @AppStorage("enableInternetSearch") private var enableInternetSearch: Bool = true
@@ -4263,6 +4264,11 @@ struct ContentView: View {
             .background(Color.primary.opacity(0.03))
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
+        }
+        .onAppear {
+            if updateManager.state == .idle {
+                Task { await updateManager.checkForUpdates(silent: false) }
+            }
         }
     }
 
