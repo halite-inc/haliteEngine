@@ -1,0 +1,19 @@
+# Web app (explicitly excluded)
+web/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode & Build
+build/
+DerivedData/
+*.xcuserstate
+project.xcworkspace/xcuserdata/
+*.xcuserdata/
+
+# Agent / Tooling outputs
+.codex/
+.gemini/
+graphify-out/
