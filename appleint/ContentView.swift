@@ -305,6 +305,7 @@ struct ContentView: View {
     @State private var newOpenRouterModel: String = ""
     @State private var newOpenAIModel: String = ""
     @State private var newLMStudioModel: String = ""
+    @State private var expandedModelProviders: Set<String> = ["gemini", "openrouter", "openai", "lmstudio"]
     
     // Batch thread selection
     @State private var selectedThreadIds = Set<UUID>()
@@ -3386,7 +3387,7 @@ struct ContentView: View {
                         .padding(.horizontal, 10)
                         .padding(.top, 2)
                     
-                    ForEach([SettingsTab.general, SettingsTab.tools]) { tab in
+                    ForEach([SettingsTab.general]) { tab in
                         settingsTabButton(for: tab)
                     }
                     
@@ -3413,31 +3414,6 @@ struct ContentView: View {
                 .padding(.horizontal, 8)
                 
                 Spacer()
-                
-                // Active Model Footer Card
-                if let activeThread = manager.activeThread {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 6, height: 6)
-                        
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("ACTIVE MODEL")
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.secondary)
-                            Text(selectedModelDisplayName(for: activeThread))
-                                .font(.system(size: 12, weight: .semibold))
-                                .lineLimit(1)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.secondary.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 12)
-                }
             }
             .frame(width: 185)
             .background(Color.secondary.opacity(0.055))
@@ -3848,18 +3824,35 @@ struct ContentView: View {
                             }
                             
                         case .models:
-                            VStack(alignment: .leading, spacing: 16) {
-                                Label("Manage Available Models", systemImage: "cpu.fill")
-                                    .font(.headline)
-                                    .foregroundStyle(accentColorValue)
+                            VStack(alignment: .leading, spacing: 12) {
+                                HStack {
+                                    Text("Providers & Model Catalogs")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(accentColorValue)
+                                    Spacer()
+                                    Button(expandedModelProviders.count == 4 ? "Collapse All" : "Expand All") {
+                                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                            if expandedModelProviders.count == 4 {
+                                                expandedModelProviders.removeAll()
+                                            } else {
+                                                expandedModelProviders = ["gemini", "openrouter", "openai", "lmstudio"]
+                                            }
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                }
                                 
-                                // Gemini Models Card
-                                modelListCard(
-                                    title: "Gemini API Models",
+                                // Gemini Accordion
+                                providerModelAccordionCard(
+                                    providerId: "gemini",
+                                    title: "Google Gemini",
                                     icon: "sparkles",
                                     color: .blue,
                                     models: manager.geminiModels,
                                     newModelText: $newGeminiModel,
+                                    placeholder: "Add model ID (e.g. gemini-2.5-flash)",
                                     onAdd: {
                                         manager.addCustomGeminiModel(newGeminiModel)
                                         newGeminiModel = ""
@@ -3867,79 +3860,32 @@ struct ContentView: View {
                                     onRemove: { manager.removeGeminiModel($0) }
                                 )
                                 
-                                // OpenRouter Models Card
-                                VStack(alignment: .leading, spacing: 10) {
-                                    HStack {
-                                        SettingsIconView(systemName: "network", bgColor: .purple)
-                                        Text("OpenRouter Models")
-                                            .font(.subheadline)
-                                            .fontWeight(.bold)
-                                        Spacer()
-                                    }
-                                    
-                                    if manager.openRouterModels.isEmpty {
-                                        Text("No OpenRouter models configured.")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    } else {
-                                        ForEach(manager.openRouterModels, id: \.self) { model in
-                                            let isFree = manager.isOpenRouterModelFree(model)
-                                            HStack {
-                                                Text(model)
-                                                    .font(.system(.caption, design: .monospaced))
-                                                    .fontWeight(.medium)
-                                                Spacer()
-                                                Text(isFree ? "FREE" : "PAID")
-                                                    .font(.system(size: 9, weight: .bold))
-                                                    .padding(.horizontal, 6)
-                                                    .padding(.vertical, 2)
-                                                    .background(isFree ? Color.green.opacity(0.18) : Color.orange.opacity(0.18))
-                                                    .foregroundStyle(isFree ? Color.green : Color.orange)
-                                                    .clipShape(Capsule())
-                                                
-                                                Button {
-                                                    manager.removeOpenRouterModel(model)
-                                                } label: {
-                                                    Image(systemName: "xmark.circle.fill")
-                                                        .foregroundStyle(.secondary)
-                                                }
-                                                .buttonStyle(.plain)
-                                            }
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 6)
-                                            .background(Color.secondary.opacity(0.06))
-                                            .cornerRadius(6)
-                                        }
-                                    }
-                                    
-                                    HStack(spacing: 8) {
-                                        TextField("Add model ID (e.g. anthropic/claude-3.5-sonnet)", text: $newOpenRouterModel)
-                                            .textFieldStyle(.roundedBorder)
-                                            .font(.caption)
-                                        Button {
-                                            manager.addCustomOpenRouterModel(newOpenRouterModel)
-                                            newOpenRouterModel = ""
-                                        } label: {
-                                            Image(systemName: "plus.circle.fill")
-                                                .font(.title3)
-                                                .foregroundStyle(.purple)
-                                        }
-                                        .buttonStyle(.plain)
-                                        .disabled(newOpenRouterModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                                    }
-                                }
-                                .padding(14)
-                                .background(Color.primary.opacity(0.03))
-                                .cornerRadius(12)
-                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.1), lineWidth: 1))
+                                // OpenRouter Accordion
+                                providerModelAccordionCard(
+                                    providerId: "openrouter",
+                                    title: "OpenRouter",
+                                    icon: "network",
+                                    color: .purple,
+                                    models: manager.openRouterModels,
+                                    newModelText: $newOpenRouterModel,
+                                    placeholder: "Add model ID (e.g. anthropic/claude-3.5-sonnet)",
+                                    isCustomOpenRouter: true,
+                                    onAdd: {
+                                        manager.addCustomOpenRouterModel(newOpenRouterModel)
+                                        newOpenRouterModel = ""
+                                    },
+                                    onRemove: { manager.removeOpenRouterModel($0) }
+                                )
                                 
-                                // OpenAI Models Card
-                                modelListCard(
-                                    title: "ChatGPT (OpenAI) Models",
+                                // OpenAI Accordion
+                                providerModelAccordionCard(
+                                    providerId: "openai",
+                                    title: "ChatGPT (OpenAI)",
                                     icon: "brain.head.profile",
                                     color: .green,
                                     models: manager.openAIModels,
                                     newModelText: $newOpenAIModel,
+                                    placeholder: "Add model ID (e.g. gpt-4o)",
                                     onAdd: {
                                         manager.addCustomOpenAIModel(newOpenAIModel)
                                         newOpenAIModel = ""
@@ -3947,13 +3893,15 @@ struct ContentView: View {
                                     onRemove: { manager.removeOpenAIModel($0) }
                                 )
                                 
-                                 // LM Studio Models Card
-                                modelListCard(
-                                    title: "LM Studio Local Models",
+                                // LM Studio Accordion
+                                providerModelAccordionCard(
+                                    providerId: "lmstudio",
+                                    title: "LM Studio Local Server",
                                     icon: "laptopcomputer",
                                     color: .orange,
                                     models: manager.lmStudioAvailableModels,
                                     newModelText: $newLMStudioModel,
+                                    placeholder: "Add model identifier (e.g. qwen2.5-coder-32b)",
                                     onAdd: {
                                         manager.addCustomLMStudioModel(newLMStudioModel)
                                         newLMStudioModel = ""
@@ -4397,61 +4345,125 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func modelListCard(title: String, icon: String, color: Color, models: [String], newModelText: Binding<String>, onAdd: @escaping () -> Void, onRemove: @escaping (String) -> Void) -> some View {
+    private func providerModelAccordionCard(
+        providerId: String,
+        title: String,
+        icon: String,
+        color: Color,
+        models: [String],
+        newModelText: Binding<String>,
+        placeholder: String = "Add model ID",
+        isCustomOpenRouter: Bool = false,
+        onAdd: @escaping () -> Void,
+        onRemove: @escaping (String) -> Void
+    ) -> some View {
+        let isExpanded = expandedModelProviders.contains(providerId)
+        
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                SettingsIconView(systemName: icon, bgColor: color)
-                Text(title)
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                Spacer()
+            // Accordion Header Row
+            Button {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                    if isExpanded {
+                        expandedModelProviders.remove(providerId)
+                    } else {
+                        expandedModelProviders.insert(providerId)
+                    }
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    SettingsIconView(systemName: icon, bgColor: color)
+                    
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    
+                    Text("\(models.count)")
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                    
+                    Spacer()
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
             }
+            .buttonStyle(.plain)
             
-            if models.isEmpty {
-                Text("No models added.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(models, id: \.self) { model in
-                    HStack {
-                        Text(model)
-                            .font(.system(.caption, design: .monospaced))
-                            .fontWeight(.medium)
-                        Spacer()
+            // Collapsible Models List & Input
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    Divider().opacity(0.4)
+                    
+                    if models.isEmpty {
+                        Text("No models configured.")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 4)
+                    } else {
+                        ForEach(models, id: \.self) { model in
+                            HStack(spacing: 6) {
+                                Text(model)
+                                    .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                
+                                Spacer()
+                                
+                                if isCustomOpenRouter {
+                                    let isFree = manager.isOpenRouterModelFree(model)
+                                    Text(isFree ? "FREE" : "PAID")
+                                        .font(.system(size: 8.5, weight: .bold))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1.5)
+                                        .background(isFree ? Color.green.opacity(0.18) : Color.orange.opacity(0.18))
+                                        .foregroundStyle(isFree ? Color.green : Color.orange)
+                                        .clipShape(Capsule())
+                                }
+                                
+                                Button {
+                                    onRemove(model)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.secondary.opacity(0.7))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                    }
+                    
+                    HStack(spacing: 6) {
+                        TextField(placeholder, text: newModelText)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11.5))
+                            .controlSize(.small)
+                        
                         Button {
-                            onRemove(model)
+                            onAdd()
                         } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(color)
                         }
                         .buttonStyle(.plain)
+                        .disabled(newModelText.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.secondary.opacity(0.06))
-                    .cornerRadius(6)
+                    .padding(.top, 2)
                 }
-            }
-            
-            HStack(spacing: 8) {
-                TextField("Add model ID", text: newModelText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.caption)
-                Button {
-                    onAdd()
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(color)
-                }
-                .buttonStyle(.plain)
-                .disabled(newModelText.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(14)
-        .background(Color.primary.opacity(0.03))
-        .cornerRadius(12)
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.1), lineWidth: 1))
+        .padding(12)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.secondary.opacity(0.1), lineWidth: 1))
     }
 }
 
