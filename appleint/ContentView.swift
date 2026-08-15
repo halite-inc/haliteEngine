@@ -207,6 +207,26 @@ struct ContentView: View {
     @AppStorage("chatWallpaperRotation") private var chatWallpaperRotation: Double = 0.0
     @AppStorage("chatWallpaperColor") private var chatWallpaperColor: String = "auto"
     @AppStorage("chatCustomWallpaperPath") private var chatCustomWallpaperPath: String = ""
+    @AppStorage("chatFontFamily") private var chatFontFamily: String = "system"
+
+    private func chatAppFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        switch chatFontFamily {
+        case "rounded":
+            return .system(size: size, weight: weight, design: .rounded)
+        case "monospaced", "mono":
+            return .system(size: size, weight: weight, design: .monospaced)
+        case "serif":
+            return .system(size: size, weight: weight, design: .serif)
+        case "menlo":
+            return .custom("Menlo", size: size)
+        case "georgia":
+            return .custom("Georgia", size: size)
+        case "helvetica":
+            return .custom("Helvetica Neue", size: size)
+        default:
+            return .system(size: size, weight: weight, design: .default)
+        }
+    }
 
     // User-configurable keyboard shortcuts
     @AppStorage("shortcut_newChat") private var shortcutNewChat: String = "N"
@@ -1662,7 +1682,7 @@ struct ContentView: View {
                                             .cornerRadius(8)
                                         if !message.text.isEmpty {
                                             Text(message.text)
-                                                .font(.system(size: 13.5))
+                                                .font(chatAppFont(size: 13.5))
                                                 .lineSpacing(3.5)
                                         }
                                     }
@@ -1673,7 +1693,7 @@ struct ContentView: View {
                                     .clipShape(BubbleShape(isUser: true))
                                 } else {
                                     Text(message.text)
-                                        .font(.system(size: 13.5))
+                                        .font(chatAppFont(size: 13.5))
                                         .lineSpacing(3.5)
                                         .padding(.horizontal, 18)
                                         .padding(.vertical, 12)
@@ -1887,18 +1907,17 @@ struct ContentView: View {
                                                              openSourcesSidebar(sources: activitySources, messageID: message.id)
                                                          }
                                                      } label: {
-                                                         HStack(spacing: 7) {
+                                                         HStack(spacing: 5) {
                                                              Image(systemName: "globe.americas.fill")
                                                                  .font(.system(size: 12, weight: .semibold))
                                                                  .foregroundStyle(.blue)
                                                              Text("Searched the web")
                                                                  .font(.system(size: 13, weight: .medium))
                                                                  .foregroundStyle(.secondary)
-                                                             Spacer()
                                                              if !activitySources.isEmpty {
                                                                  Image(systemName: "chevron.right")
                                                                      .font(.system(size: 9, weight: .semibold))
-                                                                     .foregroundStyle(.tertiary)
+                                                                     .foregroundStyle(.secondary.opacity(0.8))
                                                              }
                                                          }
                                                          .contentShape(Rectangle())
@@ -3593,6 +3612,41 @@ struct ContentView: View {
                                         .scaleEffect(0.8)
                                     }
                                 }
+                            }
+                            .padding(14)
+                            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            
+                            // Group: Chat Typography / Font Family
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
+                                    Text("Chat Font Family")
+                                        .font(.system(size: 13, weight: .medium))
+                                    Spacer()
+                                    Picker("", selection: $chatFontFamily) {
+                                        Text("System (San Francisco)").tag("system")
+                                        Text("Rounded").tag("rounded")
+                                        Text("Monospaced").tag("monospaced")
+                                        Text("Serif (New York)").tag("serif")
+                                        Text("Helvetica Neue").tag("helvetica")
+                                        Text("Georgia").tag("georgia")
+                                        Text("Menlo").tag("menlo")
+                                    }
+                                    .labelsHidden()
+                                    .frame(width: 190)
+                                }
+                                
+                                HStack(spacing: 8) {
+                                    Text("Preview:")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(.secondary)
+                                    Text("The quick brown fox jumps over the lazy dog.")
+                                        .font(chatAppFont(size: 12.5))
+                                        .foregroundStyle(.primary.opacity(0.85))
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                             }
                             .padding(14)
                             .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -5908,10 +5962,31 @@ private struct InlineMarkdownPillText: View {
 }
 
 struct MarkdownView: View {
+    @AppStorage("chatFontFamily") private var chatFontFamily: String = "system"
+
     let text: String
     var isGenerating: Bool = false
     var advancedRender: Bool = false
     var sourceLinks: [(title: String, url: String)] = []
+    
+    private func chatAppFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        switch chatFontFamily {
+        case "rounded":
+            return .system(size: size, weight: weight, design: .rounded)
+        case "monospaced", "mono":
+            return .system(size: size, weight: weight, design: .monospaced)
+        case "serif":
+            return .system(size: size, weight: weight, design: .serif)
+        case "menlo":
+            return .custom("Menlo", size: size)
+        case "georgia":
+            return .custom("Georgia", size: size)
+        case "helvetica":
+            return .custom("Helvetica Neue", size: size)
+        default:
+            return .system(size: size, weight: weight, design: .default)
+        }
+    }
     
     enum CalloutType: Hashable {
         case tip
@@ -6237,7 +6312,7 @@ struct MarkdownView: View {
                 case .paragraph(let text):
                     InlineMarkdownPillText(
                         markdown: text,
-                        font: .system(size: advancedRender ? 15.5 : 13.5),
+                        font: chatAppFont(size: advancedRender ? 15.5 : 13.5),
                         sourceLinks: sourceLinks
                     )
                         .fixedSize(horizontal: false, vertical: true)
@@ -6247,7 +6322,7 @@ struct MarkdownView: View {
                         if level == 1 {
                             InlineMarkdownPillText(
                                 markdown: title,
-                                font: .system(size: advancedRender ? 21 : 19, weight: .bold, design: .rounded),
+                                font: chatAppFont(size: advancedRender ? 21 : 19, weight: .bold),
                                 sourceLinks: sourceLinks
                             )
                                 .padding(.top, 12)
@@ -6255,7 +6330,7 @@ struct MarkdownView: View {
                         } else if level == 2 {
                             InlineMarkdownPillText(
                                 markdown: title,
-                                font: .system(size: advancedRender ? 18.5 : 16.5, weight: .bold, design: .rounded),
+                                font: chatAppFont(size: advancedRender ? 18.5 : 16.5, weight: .bold),
                                 sourceLinks: sourceLinks
                             )
                                 .padding(.top, 10)
@@ -6263,7 +6338,7 @@ struct MarkdownView: View {
                         } else if level == 3 {
                             InlineMarkdownPillText(
                                 markdown: title,
-                                font: .system(size: advancedRender ? 16 : 14.5, weight: .semibold, design: .rounded),
+                                font: chatAppFont(size: advancedRender ? 16 : 14.5, weight: .semibold),
                                 sourceLinks: sourceLinks
                             )
                                 .padding(.top, 8)
@@ -6271,7 +6346,7 @@ struct MarkdownView: View {
                         } else {
                             InlineMarkdownPillText(
                                 markdown: title,
-                                font: .system(size: advancedRender ? 15 : 13.5, weight: .semibold, design: .rounded),
+                                font: chatAppFont(size: advancedRender ? 15 : 13.5, weight: .semibold),
                                 sourceLinks: sourceLinks
                             )
                                 .padding(.top, 6)
@@ -6282,7 +6357,7 @@ struct MarkdownView: View {
                 case .boldHeader(let title):
                     InlineMarkdownPillText(
                         markdown: title,
-                        font: .system(size: advancedRender ? 16 : 14.5, weight: .bold, design: .rounded),
+                        font: chatAppFont(size: advancedRender ? 16 : 14.5, weight: .bold),
                         sourceLinks: sourceLinks
                     )
                         .padding(.top, 10)
@@ -6302,7 +6377,7 @@ struct MarkdownView: View {
                         
                         InlineMarkdownPillText(
                             markdown: itemText,
-                            font: .system(size: advancedRender ? 15.5 : 13.5),
+                            font: chatAppFont(size: advancedRender ? 15.5 : 13.5),
                             sourceLinks: sourceLinks
                         )
                             .fixedSize(horizontal: false, vertical: true)
@@ -6333,7 +6408,7 @@ struct MarkdownView: View {
                         
                         InlineMarkdownPillText(
                             markdown: bulletText,
-                            font: .system(size: advancedRender ? 15.5 : 13.5),
+                            font: chatAppFont(size: advancedRender ? 15.5 : 13.5),
                             sourceLinks: sourceLinks
                         )
                             .fixedSize(horizontal: false, vertical: true)
@@ -6356,8 +6431,7 @@ struct MarkdownView: View {
                             }
                             InlineMarkdownPillText(
                                 markdown: calloutText,
-                                font: .system(size: 13),
-                                foregroundColor: .primary.opacity(0.9),
+                                font: chatAppFont(size: 13),
                                 sourceLinks: sourceLinks
                             )
                                 .fixedSize(horizontal: false, vertical: true)
