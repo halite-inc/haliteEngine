@@ -1814,7 +1814,7 @@ struct ContentView: View {
                             let intro = message.introText
                             let conclusion = message.conclusionText
                             let isCompactHeader = toolRequest?.type == "advanced_memory" || toolRequest?.type == "learning" || toolRequest?.type == "file_system"
-                            VStack(alignment: .leading, spacing: isCompactHeader ? 4 : 12) {
+                            VStack(alignment: .leading, spacing: isCompactHeader ? 4 : 10) {
                                 if let reasoning = reasoningText, !reasoning.isEmpty {
                                     ReasoningThoughtView(
                                         reasoningText: reasoning,
@@ -1851,7 +1851,6 @@ struct ContentView: View {
                                                 font: .system(size: 13, weight: .medium)
                                             )
                                         }
-                                        .padding(.vertical, 8)
                                     } else if message.isStreamingFileSystemJSON {
                                         TerminalExecutingView()
                                     } else if message.isStreamingTaskJSON {
@@ -1880,7 +1879,6 @@ struct ContentView: View {
                                                          font: .system(size: 13, weight: .medium)
                                                      )
                                                  }
-                                                 .padding(.vertical, 8)
                                              } else {
                                                  Button {
                                                      if !activitySources.isEmpty {
@@ -1905,7 +1903,6 @@ struct ContentView: View {
                                                  }
                                                  .buttonStyle(.plain)
                                                  .help("Open web sources in the Activity sidebar")
-                                                 .padding(.vertical, 8)
                                              }
                                          } else {
                                             // Inline Title and Description header card in chat
@@ -5959,6 +5956,10 @@ struct MarkdownView: View {
         while i < count {
             let line = lines[i]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                i += 1
+                continue
+            }
             
             // 1. Code Block handling
             if trimmed.hasPrefix("```") {
@@ -6236,7 +6237,6 @@ struct MarkdownView: View {
                         sourceLinks: sourceLinks
                     )
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.bottom, 2)
                         
                 case .heading(let title, let level):
                     VStack(alignment: .leading, spacing: 0) {
