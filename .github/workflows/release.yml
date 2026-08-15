@@ -68,15 +68,12 @@ jobs:
           fi
 
           echo "Found app at: $APP_PATH"
-          cp -R "$APP_PATH" ./appleint.app
           cp -R "$APP_PATH" ./Halite.app
 
-          # Deep ad-hoc sign both app bundles to prevent "app is damaged" Gatekeeper rejection
-          codesign --force --deep --sign "-" ./appleint.app
+          # Deep ad-hoc sign app bundle to prevent "app is damaged" Gatekeeper rejection
           codesign --force --deep --sign "-" ./Halite.app
           codesign -vvv --deep --strict ./Halite.app
 
-          zip -r -y appleint-macos.zip appleint.app
           zip -r -y Halite-macos.zip Halite.app
 
           # Create DMG with Applications symlink for clean drag-and-drop install
@@ -114,7 +111,6 @@ jobs:
           files: |
             Halite.dmg
             Halite-macos.zip
-            appleint-macos.zip
           draft: false
           prerelease: false
         env:
