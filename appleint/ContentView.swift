@@ -1568,7 +1568,6 @@ struct ContentView: View {
                 let pickerWidth: CGFloat = thread.showSystemMessages
                     ? (rightSidebarSources.isEmpty ? 200 : 250)
                     : (rightSidebarSources.isEmpty ? 130 : 160)
-                let sidebarGap: CGFloat = max(16, rightSidebarWidth - pickerWidth - 44 + 18)
 
                 // Share Menu Button (anchored to the right of the chat area, outside right sidebar)
                 Menu {
@@ -1590,10 +1589,6 @@ struct ContentView: View {
                 .disabled(thread.messages.isEmpty)
 
                 if showRightSidebar {
-                    Color.clear
-                        .frame(width: sidebarGap, height: 1)
-                        .accessibilityHidden(true)
-
                     Picker("Sidebar Panel", selection: Binding(
                         get: { rightSidebarTab },
                         set: { newTab in
