@@ -1588,9 +1588,12 @@ struct ContentView: View {
                 }
                 .help("Share Transcript")
                 .disabled(thread.messages.isEmpty)
-                .padding(.trailing, showRightSidebar ? sidebarGap : 0)
 
                 if showRightSidebar {
+                    Color.clear
+                        .frame(width: sidebarGap, height: 1)
+                        .accessibilityHidden(true)
+
                     Picker("Sidebar Panel", selection: Binding(
                         get: { rightSidebarTab },
                         set: { newTab in
