@@ -989,49 +989,59 @@ struct ContentView: View {
             
             // Developer-only context diagnostics live outside the composer.
             if thread.showSystemMessages {
-                HStack(spacing: 5) {
+                HStack {
                     Spacer()
 
-                    HStack(spacing: 4) {
+                    HStack(spacing: 6) {
                         Image(systemName: "cpu")
                             .font(.system(size: 10, weight: .bold))
+                        
                         Text(manager.getContextUsageString(for: thread))
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        
                         ZStack {
                             Circle()
-                                .stroke(Color.blue.opacity(0.2), lineWidth: 2)
+                                .stroke(accentColorValue.opacity(0.25), lineWidth: 2)
                             Circle()
                                 .trim(from: 0, to: manager.getContextUsageFraction(for: thread))
                                 .stroke(
-                                    Color.blue,
+                                    accentColorValue,
                                     style: StrokeStyle(lineWidth: 2, lineCap: .round)
                                 )
                                 .rotationEffect(.degrees(-90))
                         }
-                        .frame(width: 12, height: 12)
-                        .accessibilityLabel("Context usage")
-                        .accessibilityValue(manager.getContextUsageString(for: thread))
-                    }
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3.5)
-                    .background(Capsule().fill(Color.blue.opacity(0.14)))
-                    .foregroundStyle(Color.blue)
-                    .overlay(Capsule().stroke(Color.blue.opacity(0.25), lineWidth: 1))
-                    .help("Context Usage (Used Tokens / Total Context Window)")
+                        .frame(width: 11, height: 11)
 
-                    Button(action: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            manager.clearThreadMessages(threadId: thread.id)
+                        Divider()
+                            .frame(height: 10)
+                            .opacity(0.4)
+
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                manager.clearThreadMessages(threadId: thread.id)
+                            }
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(accentColorValue.opacity(0.85))
+                                .frame(width: 14, height: 14)
+                                .contentShape(Rectangle())
                         }
-                    }) {
-                        Image(systemName: "arrow.counterclockwise.circle.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color.secondary.opacity(0.85))
-                            .padding(4)
-                            .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        .help("Reset Context (Clear conversation messages)")
                     }
-                    .buttonStyle(.plain)
-                    .help("Reset Context (Clear conversation history to empty context tokens)")
+                    .padding(.leading, 8)
+                    .padding(.trailing, 6)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(accentColorValue.opacity(0.12))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(accentColorValue.opacity(0.24), lineWidth: 0.75)
+                    )
+                    .foregroundStyle(accentColorValue)
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 4)
