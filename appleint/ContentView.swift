@@ -1565,7 +1565,7 @@ struct ContentView: View {
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
-                // Share Menu Button (anchored to the right of the chat area, outside right sidebar)
+                // Share Menu Button
                 Menu {
                     Button {
                         copyTranscript(for: thread)
@@ -1584,56 +1584,16 @@ struct ContentView: View {
                 .help("Share Transcript")
                 .disabled(thread.messages.isEmpty)
 
-                if showRightSidebar {
-                    let pickerWidth: CGFloat = thread.showSystemMessages
-                        ? (rightSidebarSources.isEmpty ? 160 : 200)
-                        : (rightSidebarSources.isEmpty ? 110 : 140)
-
-                    HStack(spacing: 8) {
-                        Button {
-                            withAnimation {
-                                showRightSidebar.toggle()
-                            }
-                        } label: {
-                            Label("Toggle Sidebar", systemImage: "sidebar.right")
-                                .foregroundStyle(.blue)
-                        }
-                        .help("Toggle Sidebar")
-
-                        Spacer()
-
-                        Picker("Sidebar Panel", selection: Binding(
-                            get: { rightSidebarTab },
-                            set: { newTab in
-                                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                                    rightSidebarTab = newTab
-                                }
-                            }
-                        )) {
-                            Image(systemName: "slider.horizontal.3").tag(RightSidebarTab.configure).help("Configure Assistant Settings")
-                            if !rightSidebarSources.isEmpty {
-                                Image(systemName: "globe").tag(RightSidebarTab.sources).help("Web Sources")
-                            }
-                            if thread.showSystemMessages {
-                                Image(systemName: "text.line.first.and.arrowtriangle.forward").tag(RightSidebarTab.prePrompts).help("Pre Prompts Manager")
-                                Image(systemName: "network").tag(RightSidebarTab.memoryGraph).help("Advanced Memory Graph")
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: pickerWidth)
+                // Toggle Right Sidebar Button
+                Button {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        showRightSidebar.toggle()
                     }
-                    .frame(width: max(200, rightSidebarWidth - 28))
-                } else {
-                    Button {
-                        withAnimation {
-                            showRightSidebar.toggle()
-                        }
-                    } label: {
-                        Label("Toggle Sidebar", systemImage: "sidebar.right")
-                            .foregroundStyle(.primary)
-                    }
-                    .help("Toggle Sidebar")
+                } label: {
+                    Label("Toggle Sidebar", systemImage: "sidebar.right")
+                        .foregroundStyle(showRightSidebar ? .blue : .primary)
                 }
+                .help("Toggle Sidebar")
             }
         }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
@@ -2447,6 +2407,47 @@ struct ContentView: View {
     private func rightSidebar(for thread: ChatThread) -> some View {
         @Bindable var bindableManager = manager
         VStack(spacing: 0) {
+            // Right Sidebar Header
+            HStack(spacing: 10) {
+                Picker("Sidebar Panel", selection: Binding(
+                    get: { rightSidebarTab },
+                    set: { newTab in
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            rightSidebarTab = newTab
+                        }
+                    }
+                )) {
+                    Image(systemName: "slider.horizontal.3").tag(RightSidebarTab.configure).help("Configure Assistant Settings")
+                    if !rightSidebarSources.isEmpty {
+                        Image(systemName: "globe").tag(RightSidebarTab.sources).help("Web Sources")
+                    }
+                    if thread.showSystemMessages {
+                        Image(systemName: "text.line.first.and.arrowtriangle.forward").tag(RightSidebarTab.prePrompts).help("Pre Prompts Manager")
+                        Image(systemName: "network").tag(RightSidebarTab.memoryGraph).help("Advanced Memory Graph")
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Button {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        showRightSidebar = false
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
+                        .background(Color.primary.opacity(0.06), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Close Sidebar")
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+
+            Divider()
+                .opacity(0.2)
             
             if rightSidebarTab == .configure {
                 // Configure panel
