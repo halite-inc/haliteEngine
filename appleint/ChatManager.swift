@@ -5652,7 +5652,7 @@ public final class ChatManager {
         let seedQuery = Self.preparedSearchQuery(
             modelQuery: requestedQuery,
             originalRequest: originalRequest,
-            preferOriginal: previousQueries.isEmpty
+            preferOriginal: false
         )
         guard !seedQuery.isEmpty else { return }
 
@@ -5780,13 +5780,13 @@ public final class ChatManager {
         }
     }
 
-    /// Treat the user's request as the source of truth instead of trusting a
-    /// local model's rewritten tool query. This prevents query drift such as
-    /// changing M5 to M1 or silently pinning a current request to an old year.
-    nonisolated private static func preparedSearchQuery(modelQuery: String, originalRequest: String, preferOriginal: Bool = false) -> String {
-        func normalized(_ value: String) -> String {
-            value
-                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+    nonisolated private static func preparedSearchQuery(
+        modelQuery: String,
+        originalRequest: String,
+        preferOriginal: Bool
+    ) -> String {
+        func normalized(_ string: String) -> String {
+            string.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
@@ -5800,19 +5800,13 @@ public final class ChatManager {
             return ""
         }
         
-        if (preferOriginal || isProposedConversational) && !original.isEmpty {
-            proposed = original
-        }
-        
-        if proposed.isEmpty && !original.isEmpty {
+        // If modelQuery is empty or conversational, fall back to original request
+        if proposed.isEmpty || isProposedConversational {
             proposed = original
         }
         
         guard !proposed.isEmpty else { return "" }
 
-        // Search only the clauses that actually describe a live or uncertain
-        // fact. Presentation requests such as “include sources” or “summarize
-        // it” are answer instructions, not useful search terms.
         let verificationTerms = [
             "search", "verify", "source", "latest", "current", "today", "recent", "newest",
             "best", "top", "recommend", "price", "cost", "available", "release", "news",
@@ -5836,22 +5830,20 @@ public final class ChatManager {
             proposed = proposed.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
         }
 
-        // Remove conversational command wrappers without altering the actual
-        // nouns, product names, numbers, or requested criteria.
+        // Remove conversational command wrappers
         let wrappers = [
             #"(?i)^please\s+"#,
             #"(?i)^(?:can|could|would)\s+you\s+"#,
-            #"(?i)^(?:search|research|google|look\s+up|find\s+out)\s+(?:the\s+web\s+)?(?:for\s+)?"#,
-            #"(?i)^(?:tell\s+me|show\s+me|give\s+me|list\s+out)\s+"#
+            #"(?i)^(?:search|research|google|look\s+up|find\s+out|find)\s+(?:the\s+web\s+)?(?:for\s+)?"#,
+            #"(?i)^(?:tell\s+me|show\s+me|give\s+me|list\s+me\s+out|list\s+out|list\s+of|give\s+me\s+a\s+list\s+of)\s+"#,
+            #"(?i)^(?:what\s+are\s+the|what\s+is\s+the|who\s+are\s+the)\s+"#
         ]
         for pattern in wrappers {
             proposed = proposed.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
         }
         proposed = normalized(proposed)
 
-        // Exact hardware values: for general product queries, append the requested hardware.
-        // For AI models & LLMs, preserve the model identity cleanly so search engines discover
-        // primary Hugging Face model cards, architecture repos, and quantization tables.
+        // Preserve hardware constraints if relevant
         let isAI: Bool
         switch evidenceDomain(for: "\(proposed) \(original)") {
         case .aiModel: isAI = true
@@ -5871,9 +5863,7 @@ public final class ChatManager {
             }
         }
 
-        // Years explicitly written by the user remain exact. A year invented
-        // by the model is removed. For freshness-sensitive requests, use the
-        // real current calendar year so this keeps working after 2026.
+        // Maintain explicit user years
         let userYears = explicitYears(in: original)
         if userYears.isEmpty {
             proposed = proposed.replacingOccurrences(of: #"\b(?:19|20)[0-9]{2}\b"#, with: "", options: .regularExpression)
@@ -5907,10 +5897,7 @@ public final class ChatManager {
         case nutrition, health, legal, finance, aiModel, software, product, news, academic, travel, general
     }
 
-    /// Remove conversation and answer-format language while preserving the
-    /// nouns, constraints, versions, dates, places, and quantities that make a
-    /// search precise. Search engines receive an evidence target, not a copy of
-    /// the user's chat sentence.
+    /// Remove conversational filler language while preserving core search keywords
     nonisolated private static func cleanedSearchSubject(_ input: String) -> String {
         var output = input
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
@@ -5923,12 +5910,14 @@ public final class ChatManager {
         let leadingPatterns = [
             #"(?i)^please\s+"#,
             #"(?i)^(?:can|could|would|will)\s+you\s+(?:please\s+)?"#,
-            #"(?i)^i\s+(?:want|wanna|need)\s+(?:you\s+)?to\s+(?:know|find|check|research|explain|look\s+up)\s+"#,
+            #"(?i)^i\s+(?:want|wanna|need)\s+(?:you\s+)?to\s+(?:know|find|check|research|explain|look\s+up|list(?:\s+me)?(?:\s+out)?|tell\s+me)\s+"#,
             #"(?i)^i\s+(?:want|wanna|need)\s+to\s+(?:know|find|check|research|look\s+up)\s+"#,
-            #"(?i)^(?:search|research|google|look\s+up|find\s+out)\s+(?:the\s+web\s+)?(?:for\s+)?"#,
-            #"(?i)^(?:tell|show|give)\s+me\s+(?:about\s+)?"#,
+            #"(?i)^(?:search|research|google|look\s+up|find\s+out|find)\s+(?:the\s+web\s+)?(?:for\s+)?"#,
+            #"(?i)^(?:tell|show|give|list)\s+me\s+(?:out\s+)?(?:about\s+)?"#,
+            #"(?i)^(?:list\s+out|give\s+me\s+a\s+list\s+of|list\s+of|top\s+list\s+of)\s+"#,
             #"(?i)^explain\s+(?:to\s+me\s+)?"#,
             #"(?i)^(?:who|what|where|when|why|how|which)\s+(?:is|are|was|were|does|do|did|can|could|should|would)\s+"#,
+            #"(?i)^(?:what\s+are\s+the|what\s+is\s+the|who\s+are\s+the)\s+"#,
             #"(?i)^(?:what\s+else\s+can\s+(?:you|u)\s+do)\b"#,
             #"(?i)^(?:what\s+can\s+(?:you|u)\s+do)\b"#
         ]
@@ -6009,7 +5998,7 @@ public final class ChatManager {
         if contains(["news", "latest", "today", "current event", "election", "announced", "breaking"]) { return .news }
         if contains(["study", "research paper", "journal", "science", "evidence", "statistics", "systematic review"]) { return .academic }
         if contains(["travel", "hotel", "flight", "train", "tourism", "restaurant", "visit", "itinerary"]) { return .travel }
-        if contains(["best", "recommend", "buy", "price", "product", "phone", "laptop", "device", "spec", "versus", " vs ", "compare", "compatible", "benchmark"]) { return .product }
+        if contains(["game", "games", "gaming", "best", "recommend", "buy", "price", "product", "phone", "laptop", "device", "spec", "versus", " vs ", "compare", "compatible", "benchmark"]) { return .product }
         return .general
     }
 
@@ -6020,114 +6009,85 @@ public final class ChatManager {
         case .aiModel:
             let modelName = extractedAIModelName(from: subject.isEmpty ? originalRequest : subject)
             return [
-                "\(modelName) model architecture parameters Hugging Face official",
-                "\(modelName) hardware requirements memory VRAM quantization GGUF MLX",
-                "\(modelName) Apple Silicon Mac local inference llama.cpp MLX"
+                "\(modelName) model architecture Hugging Face",
+                "\(modelName) hardware requirements VRAM GGUF MLX"
             ]
         case .nutrition:
             return ["\(subject) USDA FoodData Central nutrition per 100 g calories protein carbohydrates fat"]
         case .health:
             return [
-                "\(subject) official clinical guideline NIH CDC WHO NICE",
-                "\(subject) peer reviewed systematic clinical review evidence"
+                "\(subject) clinical guideline NIH CDC WHO",
+                "\(subject) systematic review evidence"
             ]
         case .legal:
             return [
-                "\(subject) official statutory text government law regulation current",
-                "\(subject) authoritative legal analysis precedent"
+                "\(subject) official statute law regulation",
+                "\(subject) legal analysis"
             ]
         case .finance:
             return [
-                "\(subject) official filing regulator data financial statements \(year)",
-                "\(subject) current independent market financial analysis \(year)"
+                "\(subject) financial report \(year)",
+                "\(subject) market analysis \(year)"
             ]
         case .software:
             return [
-                "\(subject) official documentation API reference release notes current",
-                "\(subject) architecture guide best practices"
+                "\(subject) official documentation API reference",
+                "\(subject) release notes"
             ]
         case .product:
-            if ["best", "recommend", "buy", "compare", "versus", " vs ", "benchmark", "compatible"].contains(where: { lower.contains($0) }) {
+            if ["game", "games", "gaming", "play"].contains(where: { lower.contains($0) }) {
                 return [
-                    "\(subject) official technical specifications \(year)",
-                    "\(subject) independent laboratory benchmark review teardown \(year)"
+                    "\(subject) release date reviews",
+                    "\(subject) gameplay"
                 ]
             }
-            return ["\(subject) official technical specifications current price \(year)"]
+            if ["best", "recommend", "buy", "compare", "versus", " vs ", "benchmark"].contains(where: { lower.contains($0) }) {
+                return [
+                    "\(subject) review",
+                    "\(subject) specs comparison"
+                ]
+            }
+            return ["\(subject) review specs"]
         case .news:
             return [
-                "\(subject) latest primary source wire reporting \(year)",
-                "\(subject) latest verified independent reporting \(year)"
+                "\(subject) latest news",
+                "\(subject) updates \(year)"
             ]
         case .academic:
             return [
-                "\(subject) peer reviewed research paper arXiv Nature Science IEEE",
-                "\(subject) systematic review meta analysis"
+                "\(subject) research paper arXiv",
+                "\(subject) systematic review"
             ]
         case .travel:
             return [
-                "\(subject) official current government transport information \(year)",
-                "\(subject) verified traveler logistics guide \(year)"
+                "\(subject) travel guide",
+                "\(subject) logistics guide \(year)"
             ]
         case .general:
             return [subject]
         }
     }
 
-    /// Convert a conversational request into the smallest evidence queries
-    /// needed to answer it. Structured calculation requests benefit from
-    /// several atomic lookups: sources provide standard-unit facts and the
-    /// model performs the user's requested scaling and arithmetic afterward.
+    /// Convert a search seed into high-quality, targeted web queries.
+    /// Prioritizes the AI's exact selected query directly without distortion.
     nonisolated private static func focusedSearchQueries(seedQuery: String, originalRequest: String) -> [String] {
-        let lower = originalRequest.lowercased()
-        let isNutritionCalculation = [
-            "macro", "calorie", "nutrition", "protein", "carb", "fat"
-        ].contains(where: { lower.contains($0) })
-
-        if isNutritionCalculation {
-            var ingredientText = lower
-                .replacingOccurrences(
-                    of: #"(?i)\b(?:give|tell|show)\s+me\b.*$"#,
-                    with: "",
-                    options: .regularExpression
-                )
-                .replacingOccurrences(
-                    of: #"(?i)\b(?:calculate|work\s+out|total)\b.*$"#,
-                    with: "",
-                    options: .regularExpression
-                )
-            ingredientText = ingredientText.replacingOccurrences(of: " + ", with: ",")
-            let pattern = #"(?i)(?:\b\d+(?:\.\d+)?\s*(?:g|gram|grams)\s+(?:of\s+)?)([a-z][a-z '\-]{1,45}?)(?=\s*(?:,|;|\band\b|$))"#
-            if let regex = try? NSRegularExpression(pattern: pattern) {
-                let range = NSRange(ingredientText.startIndex..., in: ingredientText)
-                let subjects = regex.matches(in: ingredientText, range: range).compactMap { match -> String? in
-                    guard match.numberOfRanges > 1,
-                          let subjectRange = Range(match.range(at: 1), in: ingredientText) else { return nil }
-                    var subject = String(ingredientText[subjectRange])
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    subject = subject.replacingOccurrences(
-                        of: #"(?i)^(?:i\s+(?:am|will|gonna|want\s+to)\s+(?:have|eat)|having|eating)\s+"#,
-                        with: "",
-                        options: .regularExpression
-                    )
-                    return subject.isEmpty ? nil : subject
-                }
-                var seen = Set<String>()
-                let uniqueSubjects = subjects.filter { seen.insert($0.lowercased()).inserted }
-                if !uniqueSubjects.isEmpty {
-                    return uniqueSubjects.prefix(4).map {
-                        "USDA FoodData Central \($0) nutrition per 100 g calories protein carbohydrates fat"
-                    }
-                }
+        let cleanSeed = cleanedSearchSubject(seedQuery)
+        let primaryQuery = cleanSeed.isEmpty ? seedQuery : cleanSeed
+        
+        var queries: [String] = [primaryQuery]
+        
+        // Add at most 1 natural supplementary query if helpful
+        let domainQueries = domainFocusedQueries(subject: primaryQuery, originalRequest: originalRequest)
+        for dq in domainQueries {
+            if !queries.contains(where: { normalizedSearchQuery($0) == normalizedSearchQuery(dq) }) {
+                queries.append(dq)
             }
         }
-
-        let subject = cleanedSearchSubject(seedQuery)
-        guard !subject.isEmpty else { return [seedQuery] }
+        
         var seen = Set<String>()
-        return domainFocusedQueries(subject: subject, originalRequest: originalRequest)
+        return queries
             .filter { seen.insert(normalizedSearchQuery($0)).inserted }
-            .prefix(4)
+            .prefix(2)
             .map { $0 }
     }
 
