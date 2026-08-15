@@ -25,81 +25,177 @@ enum AIEffortLevel: String, CaseIterable, Identifiable {
     case high = "High"
     case advanced = "Advanced"
     var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .low: return "bolt.fill"
+        case .medium: return "brain.head.profile"
+        case .high: return "flame.fill"
+        case .advanced: return "sparkles"
+        }
+    }
+
+    var emoji: String {
+        switch self {
+        case .low: return "⚡"
+        case .medium: return "💡"
+        case .high: return "🔥"
+        case .advanced: return "🌌"
+        }
+    }
+
+    var tagline: String {
+        switch self {
+        case .low: return "Fast & Concise"
+        case .medium: return "Balanced Thinker"
+        case .high: return "Deep Analyzer"
+        case .advanced: return "Max Reasoning"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .low: return "Direct answers with minimal latency"
+        case .medium: return "Standard internal chain-of-thought"
+        case .high: return "Multi-step reasoning & edge-case checks"
+        case .advanced: return "Comprehensive deep dive & synthesis"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .low: return Color(red: 0.15, green: 0.78, blue: 0.45) // Emerald Green
+        case .medium: return Color(red: 0.20, green: 0.55, blue: 0.98) // Vibrant Blue
+        case .high: return Color(red: 0.65, green: 0.32, blue: 0.95) // Vivid Purple
+        case .advanced: return Color(red: 0.98, green: 0.28, blue: 0.60) // Neon Pink
+        }
+    }
+
+    var powerLevel: Int {
+        switch self {
+        case .low: return 1
+        case .medium: return 2
+        case .high: return 3
+        case .advanced: return 4
+        }
+    }
 }
 
 private struct EffortPopoverView: View {
     let level: AIEffortLevel
     let accentColor: Color
     let onSelect: (AIEffortLevel) -> Void
-
-    private var selectedIndex: Double {
-        Double(AIEffortLevel.allCases.firstIndex(of: level) ?? 1)
-    }
+    @State private var hoveredLevel: AIEffortLevel? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header with animated Energy Badge
+            HStack(spacing: 10) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(accentColor.opacity(0.14))
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(accentColor)
+                    Circle()
+                        .fill(level.color.opacity(0.15))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: level.icon)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(level.color)
                 }
-                .frame(width: 32, height: 32)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Reasoning effort")
-                        .font(.system(size: 14, weight: .semibold))
-                    Text("Balance response speed and depth")
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
+                        Text("Reasoning Effort")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                        Text(level.emoji)
+                            .font(.system(size: 12))
+                    }
+                    Text("Controls depth & compute power")
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                 }
+
                 Spacer()
-                Text(level.rawValue)
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(accentColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(accentColor.opacity(0.12), in: Capsule())
+
+                // Power Level Indicator Dots
+                HStack(spacing: 3) {
+                    ForEach(1...4, id: \.self) { dot in
+                        Capsule()
+                            .fill(dot <= level.powerLevel ? level.color : Color.secondary.opacity(0.2))
+                            .frame(width: dot <= level.powerLevel ? 9 : 5, height: 4.5)
+                            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: level)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(Color.primary.opacity(0.04), in: Capsule())
             }
 
-            VStack(spacing: 8) {
-                Slider(
-                    value: Binding(
-                        get: { selectedIndex },
-                        set: { newValue in
-                            let index = min(max(Int(newValue.rounded()), 0), AIEffortLevel.allCases.count - 1)
-                            onSelect(AIEffortLevel.allCases[index])
-                        }
-                    ),
-                    in: 0...Double(AIEffortLevel.allCases.count - 1),
-                    step: 1
-                )
-                .tint(accentColor)
-                .controlSize(.small)
+            Divider().opacity(0.4)
 
-                HStack(spacing: 0) {
-                    ForEach(AIEffortLevel.allCases) { item in
-                        let isSelected = item == level
-                        Button {
-                            withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
-                                onSelect(item)
-                            }
-                        } label: {
-                            Text(item.rawValue)
-                                .font(.system(size: 9.5, weight: isSelected ? .semibold : .medium))
-                                .foregroundStyle(isSelected ? accentColor : Color.secondary)
-                                .frame(maxWidth: .infinity)
+            // 4 Playful Interactive Level Tiles
+            VStack(spacing: 5) {
+                ForEach(AIEffortLevel.allCases) { item in
+                    let isSelected = (item == level)
+                    let isHovered = (hoveredLevel == item)
+
+                    Button {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                            onSelect(item)
                         }
-                        .buttonStyle(.plain)
+                    } label: {
+                        HStack(spacing: 10) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(isSelected ? item.color : (isHovered ? item.color.opacity(0.15) : Color.primary.opacity(0.05)))
+                                    .frame(width: 26, height: 26)
+
+                                Image(systemName: item.icon)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(isSelected ? .white : (isHovered ? item.color : .secondary))
+                            }
+
+                            VStack(alignment: .leading, spacing: 1) {
+                                HStack(spacing: 4) {
+                                    Text(item.rawValue)
+                                        .font(.system(size: 11.5, weight: isSelected ? .bold : .semibold))
+                                        .foregroundStyle(isSelected ? item.color : .primary)
+                                    Text("• \(item.tagline)")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundStyle(isSelected ? item.color.opacity(0.8) : .secondary)
+                                }
+                                Text(item.description)
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+
+                            Spacer()
+
+                            if isSelected {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(item.color)
+                                    .transition(.scale.combined(with: .opacity))
+                            }
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .fill(isSelected ? item.color.opacity(0.09) : (isHovered ? Color.primary.opacity(0.035) : Color.clear))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .stroke(isSelected ? item.color.opacity(0.35) : Color.clear, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { h in
+                        hoveredLevel = h ? item : nil
                     }
                 }
             }
-            .padding(.horizontal, 2)
         }
-        .padding(16)
-        .frame(width: 330)
+        .padding(13)
+        .frame(width: 310)
     }
 }
 
@@ -155,6 +251,16 @@ struct ContentView: View {
     @AppStorage("chatWallpaperRotation") private var chatWallpaperRotation: Double = 0.0
     @AppStorage("chatWallpaperColor") private var chatWallpaperColor: String = "auto"
     @AppStorage("chatCustomWallpaperPath") private var chatCustomWallpaperPath: String = ""
+
+    // User-configurable keyboard shortcuts
+    @AppStorage("shortcut_newChat") private var shortcutNewChat: String = "N"
+    @AppStorage("shortcut_toggleSidebar") private var shortcutToggleSidebar: String = "S"
+    @AppStorage("shortcut_openSettings") private var shortcutOpenSettings: String = ","
+    @AppStorage("shortcut_search") private var shortcutSearch: String = "K"
+    @AppStorage("shortcut_devMode") private var shortcutDevMode: String = "D"
+    @AppStorage("shortcut_voiceMode") private var shortcutVoiceMode: String = "V"
+    @AppStorage("shortcut_clearChat") private var shortcutClearChat: String = "Delete"
+    @AppStorage("shortcut_exportThread") private var shortcutExportThread: String = "E"
     
     @State private var customColor: Color = .blue
     @State private var hoveredRowId: UUID? = nil
@@ -250,6 +356,7 @@ struct ContentView: View {
 
     enum SettingsTab: String, CaseIterable, Identifiable {
         case general = "Appearance"
+        case shortcuts = "Shortcuts"
         case prePrompts = "Pre Prompts"
         case tools = "Tools & Modes"
         case apiKeys = "Configure APIs"
@@ -261,6 +368,7 @@ struct ContentView: View {
         var iconName: String {
             switch self {
             case .general: return "paintbrush.fill"
+            case .shortcuts: return "command"
             case .prePrompts: return "text.line.first.and.arrowtriangle.forward"
             case .tools: return "gearshape.2.fill"
             case .apiKeys: return "key.fill"
@@ -272,6 +380,7 @@ struct ContentView: View {
         var iconBgColor: Color {
             switch self {
             case .general: return .blue
+            case .shortcuts: return .indigo
             case .prePrompts: return .purple
             case .tools: return .orange
             case .apiKeys: return .green
@@ -3387,7 +3496,7 @@ struct ContentView: View {
                         .padding(.horizontal, 10)
                         .padding(.top, 2)
                     
-                    ForEach([SettingsTab.general]) { tab in
+                    ForEach([SettingsTab.general, SettingsTab.shortcuts]) { tab in
                         settingsTabButton(for: tab)
                     }
                     
@@ -3677,6 +3786,10 @@ struct ContentView: View {
                             }
                             .padding(14)
                             .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                        case .shortcuts:
+                            shortcutsSettingsView
+
                         case .prePrompts:
                             VStack(alignment: .leading, spacing: 12) {
                                 PrePromptsView(manager: manager, threadId: manager.activeThreadId)
@@ -4246,9 +4359,232 @@ struct ContentView: View {
         .buttonStyle(.plain)
     }
 
+    private var shortcutsSettingsView: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Keyboard Shortcuts")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(accentColorValue)
+                Spacer()
+                Button("Reset to Defaults") {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                        shortcutNewChat = "N"
+                        shortcutToggleSidebar = "S"
+                        shortcutOpenSettings = ","
+                        shortcutSearch = "K"
+                        shortcutDevMode = "D"
+                        shortcutVoiceMode = "V"
+                        shortcutClearChat = "Delete"
+                        shortcutExportThread = "E"
+                    }
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+            }
+
+            // Group 1: Navigation & Windows
+            VStack(spacing: 10) {
+                HStack {
+                    Text("NAVIGATION & WINDOWS")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+
+                shortcutRowView(
+                    title: "New Chat Thread",
+                    description: "Create a clean new conversation",
+                    modifierSymbol: "⌘",
+                    keyBinding: $shortcutNewChat,
+                    defaultKey: "N"
+                )
+
+                Divider().opacity(0.4)
+
+                shortcutRowView(
+                    title: "Toggle Left Sidebar",
+                    description: "Show or hide the chat history sidebar",
+                    modifierSymbol: "⌘",
+                    keyBinding: $shortcutToggleSidebar,
+                    defaultKey: "S"
+                )
+
+                Divider().opacity(0.4)
+
+                shortcutRowView(
+                    title: "Open Preferences / Settings",
+                    description: "Open the application configuration panel",
+                    modifierSymbol: "⌘",
+                    keyBinding: $shortcutOpenSettings,
+                    defaultKey: ","
+                )
+
+                Divider().opacity(0.4)
+
+                shortcutRowView(
+                    title: "Focus Search / Filter",
+                    description: "Jump to search bar across chat threads",
+                    modifierSymbol: "⌘",
+                    keyBinding: $shortcutSearch,
+                    defaultKey: "K"
+                )
+            }
+            .padding(14)
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            // Group 2: AI & Chat Actions
+            VStack(spacing: 10) {
+                HStack {
+                    Text("CHAT & CONTROLS")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+
+                shortcutRowView(
+                    title: "Toggle Developer Mode",
+                    description: "Switch between clean transcript & raw JSON tool blocks",
+                    modifierSymbol: "⌘",
+                    keyBinding: $shortcutDevMode,
+                    defaultKey: "D"
+                )
+
+                Divider().opacity(0.4)
+
+                shortcutRowView(
+                    title: "Toggle Voice / Dictation",
+                    description: "Activate real-time voice prompt input",
+                    modifierSymbol: "⌘⇧",
+                    keyBinding: $shortcutVoiceMode,
+                    defaultKey: "V"
+                )
+
+                Divider().opacity(0.4)
+
+                shortcutRowView(
+                    title: "Export / Share Thread",
+                    description: "Quick export or copy chat markdown transcript",
+                    modifierSymbol: "⌘",
+                    keyBinding: $shortcutExportThread,
+                    defaultKey: "E"
+                )
+
+                Divider().opacity(0.4)
+
+                shortcutRowView(
+                    title: "Clear Current Chat",
+                    description: "Remove messages from active conversation",
+                    modifierSymbol: "⌘",
+                    keyBinding: $shortcutClearChat,
+                    defaultKey: "Delete"
+                )
+            }
+            .padding(14)
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            // Group 3: Input & Composer
+            VStack(spacing: 10) {
+                HStack {
+                    Text("COMPOSER & TYPING")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Send Message")
+                            .font(.system(size: 12.5, weight: .medium))
+                        Text("Submit current prompt to AI model")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text("Return ↩")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+
+                Divider().opacity(0.4)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Insert New Line")
+                            .font(.system(size: 12.5, weight: .medium))
+                        Text(shiftEnterForNewLine ? "Shift + Return inserts a line break" : "Return inserts line break (Cmd+Return sends)")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(shiftEnterForNewLine ? "⇧ Return" : "Return ↩")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+            }
+            .padding(14)
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    @ViewBuilder
+    private func shortcutRowView(
+        title: String,
+        description: String,
+        modifierSymbol: String,
+        keyBinding: Binding<String>,
+        defaultKey: String
+    ) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 12.5, weight: .medium))
+                Text(description)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            HStack(spacing: 4) {
+                Text(modifierSymbol)
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+
+                Menu {
+                    ForEach(["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", ",", ".", "/", "Delete", "Space"], id: \.self) { key in
+                        Button(key) {
+                            keyBinding.wrappedValue = key
+                        }
+                    }
+                } label: {
+                    Text(keyBinding.wrappedValue.isEmpty ? defaultKey : keyBinding.wrappedValue)
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(accentColorValue.opacity(0.12), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).stroke(accentColorValue.opacity(0.3), lineWidth: 1))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+        }
+    }
+
     private func settingsTabSubtitle(for tab: SettingsTab) -> String {
         switch tab {
         case .general: return "Customize theme colors, bubble layouts, and window styling."
+        case .shortcuts: return "View and customize keyboard shortcut keybindings."
         case .prePrompts: return "Inspect and toggle pre-prompts fed to the AI engine."
         case .tools: return "Control real-time search, memory graph, and file system rights."
         case .apiKeys: return "Configure cloud API keys and local server endpoints."

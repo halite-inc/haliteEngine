@@ -6,9 +6,21 @@
 //
 
 import SwiftUI
+import AppKit
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Enforce Halite title on main application menu
+        if let menu = NSApp.mainMenu?.items.first {
+            menu.title = "Halite"
+            menu.submenu?.title = "Halite"
+        }
+    }
+}
 
 @main
 struct appleintApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var manager: ChatManager
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("appAppearance") private var appAppearance: String = "system"
@@ -28,6 +40,15 @@ struct appleintApp: App {
         }
         .commands {
             SidebarCommands()
+            CommandGroup(replacing: .appInfo) {
+                Button("About Halite") {
+                    NSApplication.shared.orderFrontStandardAboutPanel(
+                        options: [
+                            NSApplication.AboutPanelOptionKey.applicationName: "Halite"
+                        ]
+                    )
+                }
+            }
         }
     }
 
