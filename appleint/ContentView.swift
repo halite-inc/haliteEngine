@@ -1843,7 +1843,15 @@ struct ContentView: View {
                                 
                                 if isStreamingJSONPart {
                                     if message.isStreamingSearchJSON {
-                                        EmptyView()
+                                        HStack(spacing: 7) {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                            CrystalizingText(
+                                                label: "Searching web…",
+                                                font: .system(size: 13, weight: .medium)
+                                            )
+                                        }
+                                        .padding(.vertical, 8)
                                     } else if message.isStreamingFileSystemJSON {
                                         TerminalExecutingView()
                                     } else if message.isStreamingTaskJSON {
@@ -1854,57 +1862,52 @@ struct ContentView: View {
                                         CrystalizingView()
                                     }
                                 }
-                                
-                                if let request = toolRequest {
-                                    let hasInsights = request.fields.contains(where: { $0.type == .insight })
-                                    
-                                    VStack(alignment: .leading, spacing: isCompactHeader ? 2 : 8) {
-                                        if request.type == "internet_use" {
-                                            // One status row represents the whole web-search phase,
-                                            // even when the model issues several refinement queries.
-                                            let isSearching = manager.toolRequestManager.isProcessing(threadId: thread.id)
-                                            let activitySources = searchLinksForSearchActivity(startingAt: message, in: thread)
+                                 
+                                 if let request = toolRequest {
+                                     let hasInsights = request.fields.contains(where: { $0.type == .insight })
+                                     
+                                     VStack(alignment: .leading, spacing: isCompactHeader ? 2 : 8) {
+                                         if request.type == "internet_use" {
+                                             let isSearching = manager.toolRequestManager.isProcessing(threadId: thread.id) || (isCurrentlyStreaming && conclusion.isEmpty)
+                                             let activitySources = searchLinksForSearchActivity(startingAt: message, in: thread)
 
-                                            // Small searches already expose their citations and
-                                            // Sources button on the final response. Reserve the
-                                            // separate search activity row for larger research turns.
-                                            if activitySources.count > 4 {
-                                                if isSearching {
-                                                    HStack(spacing: 7) {
-                                                        ProgressView()
-                                                            .controlSize(.small)
-                                                        CrystalizingText(
-                                                            label: "Searching web…",
-                                                            font: .system(size: 13, weight: .medium)
-                                                        )
-                                                    }
-                                                    .padding(.vertical, 4)
-                                                } else {
-                                                    Group {
-                                                        Button {
-                                                            openSourcesSidebar(sources: activitySources, messageID: message.id)
-                                                        } label: {
-                                                            HStack(spacing: 7) {
-                                                                Image(systemName: "globe.americas.fill")
-                                                                    .font(.system(size: 11.5, weight: .semibold))
-                                                                    .foregroundStyle(.blue)
-                                                                Text("Searched the web")
-                                                                    .font(.system(size: 13, weight: .medium))
-                                                                    .foregroundStyle(.secondary)
-                                                                Spacer()
-                                                                Image(systemName: "chevron.right")
-                                                                    .font(.system(size: 9, weight: .semibold))
-                                                                    .foregroundStyle(.tertiary)
-                                                            }
-                                                            .contentShape(Rectangle())
-                                                        }
-                                                        .buttonStyle(.plain)
-                                                        .help("Open web sources in the Activity sidebar")
-                                                    }
-                                                    .padding(.vertical, 4)
-                                                }
-                                            }
-                                        } else {
+                                             if isSearching {
+                                                 HStack(spacing: 7) {
+                                                     ProgressView()
+                                                         .controlSize(.small)
+                                                     CrystalizingText(
+                                                         label: "Searching web…",
+                                                         font: .system(size: 13, weight: .medium)
+                                                     )
+                                                 }
+                                                 .padding(.vertical, 8)
+                                             } else {
+                                                 Button {
+                                                     if !activitySources.isEmpty {
+                                                         openSourcesSidebar(sources: activitySources, messageID: message.id)
+                                                     }
+                                                 } label: {
+                                                     HStack(spacing: 7) {
+                                                         Image(systemName: "globe.americas.fill")
+                                                             .font(.system(size: 12, weight: .semibold))
+                                                             .foregroundStyle(.blue)
+                                                         Text("Searched the web")
+                                                             .font(.system(size: 13, weight: .medium))
+                                                             .foregroundStyle(.secondary)
+                                                         Spacer()
+                                                         if !activitySources.isEmpty {
+                                                             Image(systemName: "chevron.right")
+                                                                 .font(.system(size: 9, weight: .semibold))
+                                                                 .foregroundStyle(.tertiary)
+                                                         }
+                                                     }
+                                                     .contentShape(Rectangle())
+                                                 }
+                                                 .buttonStyle(.plain)
+                                                 .help("Open web sources in the Activity sidebar")
+                                                 .padding(.vertical, 8)
+                                             }
+                                         } else {
                                             // Inline Title and Description header card in chat
                                             if !hasInsights {
                                                 let isFileSystem = request.type == "file_system" || request.displayTitle == "terminal used"
