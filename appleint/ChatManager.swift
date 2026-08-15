@@ -3723,28 +3723,6 @@ public final class ChatManager {
                 )
             }
 
-            // A model with an older knowledge cutoff may silently rewrite a
-            // new product generation (for example M5) to M3/M4 in its search
-            // query. Searches must preserve and verify the user's exact term
-            // before using older-generation evidence.
-            if toolRequest.type == "internet_use",
-               let originalGoal = runController.activeRun?.userGoal {
-                let contextualGoal = contextualizedSearchRequest(
-                    for: threadId,
-                    currentRequest: originalGoal
-                )
-                let exactConstraints = Self.exactHardwareConstraints(in: contextualGoal)
-                let queryLower = (toolRequest.query ?? "").lowercased()
-                let omittedConstraint = exactConstraints.contains { !queryLower.contains($0.lowercased()) }
-                let currentYear = Calendar.current.component(.year, from: Date())
-                let originalYears = Self.explicitYears(in: contextualGoal)
-                let queryYears = Self.explicitYears(in: toolRequest.query ?? "")
-                let inventedStaleYear = originalYears.isEmpty && queryYears.contains(where: { $0 != currentYear })
-                if omittedConstraint || inventedStaleYear {
-                    toolRequest.query = "\(contextualGoal) exact model verification current information \(currentYear)"
-                }
-            }
-
             // Settings can change while the app is open; refresh definitions
             // before every dispatch so disabled tools are never executed.
             configureToolRegistry()
@@ -5812,91 +5790,14 @@ public final class ChatManager {
             return ""
         }
         
-        // If modelQuery is empty or conversational, fall back to original request
         if proposed.isEmpty || isProposedConversational {
             proposed = original
         }
         
         guard !proposed.isEmpty else { return "" }
 
-        let verificationTerms = [
-            "search", "verify", "source", "latest", "current", "today", "recent", "newest",
-            "best", "top", "recommend", "price", "cost", "available", "release", "news",
-            "compatib", "supported", "can run", "can play", "playable", "crossover", "wine", "proton"
-        ]
-        let clauses = proposed.components(separatedBy: CharacterSet(charactersIn: ".!?;\n"))
-        let checkableClauses = clauses.filter { clause in
-            let lower = clause.lowercased()
-            return verificationTerms.contains(where: { lower.contains($0) })
-        }
-        if !checkableClauses.isEmpty {
-            proposed = checkableClauses.joined(separator: " ")
-        }
-        let outputOnlyPatterns = [
-            #"(?i)\s+(?:and\s+)?(?:include|provide|list)\s+(?:the\s+)?(?:sources?|citations?)(?:\s+links?)?.*$"#,
-            #"(?i)\s+(?:and\s+)?cite\s+(?:the\s+)?sources?.*$"#,
-            #"(?i)\s+(?:and\s+)?(?:then\s+)?tell\s+me\s+(?:the\s+)?(?:final\s+)?url.*$"#,
-            #"(?i)\s+(?:and\s+)?summari[sz]e\s+(?:what\s+you\s+found|the\s+results?).*$"#
-        ]
-        for pattern in outputOnlyPatterns {
-            proposed = proposed.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
-        }
-
-        // Remove conversational command wrappers
-        let wrappers = [
-            #"(?i)^please\s+"#,
-            #"(?i)^(?:can|could|would)\s+you\s+"#,
-            #"(?i)^(?:search|research|google|look\s+up|find\s+out|find)\s+(?:the\s+web\s+)?(?:for\s+)?"#,
-            #"(?i)^(?:tell\s+me|show\s+me|give\s+me|list\s+me\s+out|list\s+out|list\s+of|give\s+me\s+a\s+list\s+of)\s+"#,
-            #"(?i)^(?:what\s+are\s+the|what\s+is\s+the|who\s+are\s+the)\s+"#
-        ]
-        for pattern in wrappers {
-            proposed = proposed.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
-        }
-        proposed = normalized(proposed)
-
-        // Preserve hardware constraints if relevant
-        let isAI: Bool
-        switch evidenceDomain(for: "\(proposed) \(original)") {
-        case .aiModel: isAI = true
-        default: isAI = false
-        }
-        if !isAI {
-            let constraints = exactHardwareConstraints(in: original)
-            let requestedChips = Set(constraints.filter { $0.hasPrefix("M") })
-            if !requestedChips.isEmpty,
-               let chipPattern = try? NSRegularExpression(pattern: #"(?i)\bM[1-9][0-9]?\b"#) {
-                let range = NSRange(proposed.startIndex..., in: proposed)
-                proposed = chipPattern.stringByReplacingMatches(in: proposed, range: range, withTemplate: "")
-                proposed = normalized(proposed)
-            }
-            for constraint in constraints where !proposed.localizedCaseInsensitiveContains(constraint) {
-                proposed += " \(constraint)"
-            }
-        }
-
-        // Maintain explicit user years
-        let userYears = explicitYears(in: original)
-        if userYears.isEmpty {
-            proposed = proposed.replacingOccurrences(of: #"\b(?:19|20)[0-9]{2}\b"#, with: "", options: .regularExpression)
-            proposed = normalized(proposed)
-            let lowerOriginal = original.lowercased()
-            let freshnessTerms = [
-                "latest", "current", "today", "recent", "newest", "best", "top ",
-                "recommend", "price", "available", "compatib", "crossover", "wine", "proton"
-            ]
-            if freshnessTerms.contains(where: { lowerOriginal.contains($0) }) {
-                proposed += " \(Calendar.current.component(.year, from: Date()))"
-            }
-        } else {
-            let allowed = Set(userYears)
-            for year in explicitYears(in: proposed) where !allowed.contains(year) {
-                proposed = proposed.replacingOccurrences(of: "\(year)", with: "")
-            }
-            for year in userYears where !proposed.contains("\(year)") { proposed += " \(year)" }
-        }
-
-        return normalized(proposed)
+        let cleaned = cleanedSearchSubject(proposed)
+        return cleaned.isEmpty ? proposed : cleaned
     }
 
     nonisolated private static func normalizedSearchQuery(_ query: String) -> String {
@@ -6085,22 +5986,7 @@ public final class ChatManager {
     nonisolated private static func focusedSearchQueries(seedQuery: String, originalRequest: String) -> [String] {
         let cleanSeed = cleanedSearchSubject(seedQuery)
         let primaryQuery = cleanSeed.isEmpty ? seedQuery : cleanSeed
-        
-        var queries: [String] = [primaryQuery]
-        
-        // Add at most 1 natural supplementary query if helpful
-        let domainQueries = domainFocusedQueries(subject: primaryQuery, originalRequest: originalRequest)
-        for dq in domainQueries {
-            if !queries.contains(where: { normalizedSearchQuery($0) == normalizedSearchQuery(dq) }) {
-                queries.append(dq)
-            }
-        }
-        
-        var seen = Set<String>()
-        return queries
-            .filter { seen.insert(normalizedSearchQuery($0)).inserted }
-            .prefix(2)
-            .map { $0 }
+        return [primaryQuery]
     }
 
     /// A short follow-up such as “what about M5?” needs the preceding subject,
