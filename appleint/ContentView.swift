@@ -421,12 +421,12 @@ struct ContentView: View {
         Button {
             copyTranscript(for: thread)
         } label: {
-            Label("Copy as transcribe", systemImage: "doc.on.doc")
+            Label("Copy transcribe", systemImage: "doc.on.doc")
         }
         Button {
             downloadTranscript(for: thread)
         } label: {
-            Label("Download transcribe into text file", systemImage: "arrow.down.doc")
+            Label("Download transcribe", systemImage: "arrow.down.doc")
         }
         Divider()
         if selectedThreadIds.count > 1 && selectedThreadIds.contains(thread.id) {
@@ -1599,13 +1599,13 @@ struct ContentView: View {
                     Button {
                         copyTranscript(for: thread)
                     } label: {
-                        Label("Copy as transcribe", systemImage: "doc.on.doc")
+                        Label("Copy transcribe", systemImage: "doc.on.doc")
                     }
                     
                     Button {
                         downloadTranscript(for: thread)
                     } label: {
-                        Label("Download transcribe into text file", systemImage: "arrow.down.doc")
+                        Label("Download transcribe", systemImage: "arrow.down.doc")
                     }
                 } label: {
                     Label("Share", systemImage: "square.and.arrow.up")
