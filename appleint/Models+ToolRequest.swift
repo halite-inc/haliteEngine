@@ -319,7 +319,10 @@ public struct ToolRequestParser {
             if let nativeToolRequest = parseNativeToolCall(text: sanitizedText) {
                 return nativeToolRequest
             }
-            return parseJSON(text: sanitizedText)
+            if let jsonRequest = parseJSON(text: sanitizedText) {
+                return jsonRequest
+            }
+            return parseCommandBlockToolCall(sanitizedText)
         }()
         
         lock.lock()
@@ -327,6 +330,47 @@ public struct ToolRequestParser {
         lock.unlock()
         
         return result
+    }
+
+    /// When models describe commands in markdown code blocks after failures (e.g. ```bash brew install ...```),
+    /// parse them as an execute_command tool call so the agent automatically continues execution without stalling.
+    private static func parseCommandBlockToolCall(_ text: String) -> ToolRequest? {
+        let pattern = #"(?is)```(?:bash|zsh|sh|shell)\s*\n(.*?)```"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let cmdRange = Range(match.range(at: 1), in: text) else { return nil }
+
+        var cmd = String(text[cmdRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cmd.isEmpty else { return nil }
+
+        // Remove `/bin/zsh -c "..."` or `/bin/bash -c "..."` wrapping if present
+        if cmd.hasPrefix("/bin/zsh -c \"") && cmd.hasSuffix("\"") {
+            cmd = String(cmd.dropFirst("/bin/zsh -c \"".count).dropLast(1))
+        } else if cmd.hasPrefix("/bin/bash -c \"") && cmd.hasSuffix("\"") {
+            cmd = String(cmd.dropFirst("/bin/bash -c \"".count).dropLast(1))
+        } else if cmd.hasPrefix("/bin/zsh -c '") && cmd.hasSuffix("'") {
+            cmd = String(cmd.dropFirst("/bin/zsh -c '".count).dropLast(1))
+        } else if cmd.hasPrefix("zsh -c \"") && cmd.hasSuffix("\"") {
+            cmd = String(cmd.dropFirst("zsh -c \"".count).dropLast(1))
+        }
+
+        let lower = text.lowercased()
+        let hasExecutionIntent = lower.contains("run") ||
+                                lower.contains("execut") ||
+                                lower.contains("install") ||
+                                lower.contains("check") ||
+                                lower.contains("command") ||
+                                text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("```")
+        guard hasExecutionIntent else { return nil }
+
+        return ToolRequest(
+            type: "file_system",
+            title: "terminal used",
+            description: "Executing terminal command...",
+            fields: [],
+            action: "execute_command",
+            command: cmd
+        )
     }
 
     /// Some models follow the compact tool signature shown in their prompt and emit
