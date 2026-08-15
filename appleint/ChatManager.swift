@@ -5641,25 +5641,36 @@ public final class ChatManager {
 
     @MainActor
     private func performInternetSearch(toolRequest: ToolRequest, threadId: UUID) {
-        guard let requestedQuery = toolRequest.query?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !requestedQuery.isEmpty else { return }
-        let rawOriginalRequest = controller(for: threadId).activeRun?.userGoal ?? requestedQuery
+        var rawQueries: [String] = []
+        if let explicitQueries = toolRequest.queries, !explicitQueries.isEmpty {
+            rawQueries = explicitQueries.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        } else if let single = toolRequest.query?.trimmingCharacters(in: .whitespacesAndNewlines), !single.isEmpty {
+            rawQueries = [single]
+        }
+        guard !rawQueries.isEmpty else { return }
+
+        let rawOriginalRequest = controller(for: threadId).activeRun?.userGoal ?? rawQueries.first ?? ""
         let originalRequest = contextualizedSearchRequest(
             for: threadId,
             currentRequest: rawOriginalRequest
         )
         let previousQueries = searchQueriesByThread[threadId] ?? []
-        let seedQuery = Self.preparedSearchQuery(
-            modelQuery: requestedQuery,
-            originalRequest: originalRequest,
-            preferOriginal: false
-        )
-        guard !seedQuery.isEmpty else { return }
 
-        let plannedQueries = Self.focusedSearchQueries(
-            seedQuery: seedQuery,
-            originalRequest: originalRequest
-        )
+        var plannedQueries: [String] = []
+        for rawQ in rawQueries {
+            let seed = Self.preparedSearchQuery(
+                modelQuery: rawQ,
+                originalRequest: originalRequest,
+                preferOriginal: false
+            )
+            guard !seed.isEmpty else { continue }
+            for fq in Self.focusedSearchQueries(seedQuery: seed, originalRequest: originalRequest) {
+                if !plannedQueries.contains(where: { Self.normalizedSearchQuery($0) == Self.normalizedSearchQuery(fq) }) {
+                    plannedQueries.append(fq)
+                }
+            }
+        }
+
         let previousNormalized = Set(previousQueries.map(Self.normalizedSearchQuery))
         let distinctQueries = plannedQueries.filter { !previousNormalized.contains(Self.normalizedSearchQuery($0)) }
         let availableSearchSlots = max(0, 4 - previousQueries.count)
@@ -5743,7 +5754,8 @@ public final class ChatManager {
                 "status": status,
                 "fetched_evidence": outcome.success ? outcome.text : "",
                 "original_request": originalRequest,
-                "executed_query": queries.first ?? seedQuery,
+                "executed_query": queries.first ?? rawQueries.first ?? "",
+                "executed_queries": queries,
                 "provider_queries": outcome.queriesUsed,
                 "successful_queries": outcome.successfulQueries,
                 "search_round": allTurnQueries.count,
@@ -6517,13 +6529,133 @@ public final class ChatManager {
         return raw.hasPrefix("http") ? raw : ""
     }
 
+    nonisolated private static func convertTablesToMarkdown(_ input: String) -> String {
+        var output = input
+        let tablePattern = #"(?is)<table[^>]*>(.*?)</table>"#
+        guard let tableRegex = try? NSRegularExpression(pattern: tablePattern) else { return input }
+        let matches = tableRegex.matches(in: input, range: NSRange(input.startIndex..., in: input))
+        
+        for match in matches.reversed() {
+            guard let tableRange = Range(match.range, in: input),
+                  let bodyRange = Range(match.range(at: 1), in: input) else { continue }
+            let tableHTML = String(input[bodyRange])
+            
+            let rowPattern = #"(?is)<tr[^>]*>(.*?)</tr>"#
+            guard let rowRegex = try? NSRegularExpression(pattern: rowPattern) else { continue }
+            let rowMatches = rowRegex.matches(in: tableHTML, range: NSRange(tableHTML.startIndex..., in: tableHTML))
+            
+            var markdownRows: [[String]] = []
+            for rowMatch in rowMatches {
+                guard let cellBodyRange = Range(rowMatch.range(at: 1), in: tableHTML) else { continue }
+                let rowContent = String(tableHTML[cellBodyRange])
+                let cellPattern = #"(?is)<(?:td|th)[^>]*>(.*?)</(?:td|th)>"#
+                guard let cellRegex = try? NSRegularExpression(pattern: cellPattern) else { continue }
+                let cellMatches = cellRegex.matches(in: rowContent, range: NSRange(rowContent.startIndex..., in: rowContent))
+                let cells = cellMatches.compactMap { cellMatch -> String? in
+                    guard let cellRange = Range(cellMatch.range(at: 1), in: rowContent) else { return nil }
+                    let rawCell = String(rowContent[cellRange])
+                    let clean = rawCell.replacingOccurrences(of: #"(?s)<[^>]+>"#, with: " ", options: .regularExpression)
+                        .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    return clean.replacingOccurrences(of: "|", with: "/")
+                }
+                if !cells.isEmpty {
+                    markdownRows.append(cells)
+                }
+            }
+            
+            guard !markdownRows.isEmpty else { continue }
+            let columnCount = markdownRows.map(\.count).max() ?? 0
+            guard columnCount > 0 else { continue }
+            
+            var tableMarkdown = "\n\n"
+            let firstRow = markdownRows[0]
+            let headerCells = (0..<columnCount).map { i in i < firstRow.count ? firstRow[i] : "" }
+            tableMarkdown += "| " + headerCells.joined(separator: " | ") + " |\n"
+            tableMarkdown += "| " + Array(repeating: "---", count: columnCount).joined(separator: " | ") + " |\n"
+            
+            for row in markdownRows.dropFirst() {
+                let cells = (0..<columnCount).map { i in i < row.count ? row[i] : "" }
+                tableMarkdown += "| " + cells.joined(separator: " | ") + " |\n"
+            }
+            tableMarkdown += "\n"
+            
+            output.replaceSubrange(tableRange, with: tableMarkdown)
+        }
+        return output
+    }
+
+    nonisolated private static func decodeHTMLEntities(_ text: String) -> String {
+        var str = text
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&apos;", with: "'")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&mdash;", with: "—")
+            .replacingOccurrences(of: "&ndash;", with: "–")
+            .replacingOccurrences(of: "&hellip;", with: "…")
+            .replacingOccurrences(of: "&trade;", with: "™")
+            .replacingOccurrences(of: "&copy;", with: "©")
+            .replacingOccurrences(of: "&reg;", with: "®")
+        
+        let numPattern = #"&#(\d+);"#
+        if let regex = try? NSRegularExpression(pattern: numPattern) {
+            let matches = regex.matches(in: str, range: NSRange(str.startIndex..., in: str))
+            for match in matches.reversed() {
+                if let fullRange = Range(match.range, in: str),
+                   let numRange = Range(match.range(at: 1), in: str),
+                   let code = UInt32(str[numRange]),
+                   let scalar = UnicodeScalar(code) {
+                    str.replaceSubrange(fullRange, with: String(Character(scalar)))
+                }
+            }
+        }
+        return str
+    }
+
+    nonisolated private static func convertHTMLToReadableMarkdown(_ rawHTML: String) -> String {
+        var html = rawHTML
+        
+        let removePatterns = [
+            #"(?is)<script.*?</script>"#,
+            #"(?is)<style.*?</style>"#,
+            #"(?is)<noscript.*?</noscript>"#,
+            #"(?is)<svg.*?</svg>"#,
+            #"(?is)<form.*?</form>"#,
+            #"(?is)<nav.*?</nav>"#,
+            #"(?is)<header.*?</header>"#,
+            #"(?is)<footer.*?</footer>"#,
+            #"(?is)<aside.*?</aside>"#,
+            #"(?is)<!--.*?-->"#
+        ]
+        for pattern in removePatterns {
+            html = html.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
+        }
+        
+        html = convertTablesToMarkdown(html)
+        html = html.replacingOccurrences(of: #"(?i)<h[1-3][^>]*>(.*?)</h[1-3]>"#, with: "\n\n## $1\n", options: .regularExpression)
+        html = html.replacingOccurrences(of: #"(?i)<h[4-6][^>]*>(.*?)</h[4-6]>"#, with: "\n\n### $1\n", options: .regularExpression)
+        html = html.replacingOccurrences(of: #"(?i)<li[^>]*>(.*?)</li>"#, with: "\n- $1", options: .regularExpression)
+        html = html.replacingOccurrences(of: #"(?i)</?(?:p|article|section|main|div|tr|ul|ol|dl|dt|dd)[^>]*>"#, with: "\n", options: .regularExpression)
+        html = html.replacingOccurrences(of: #"(?i)<br\s*/?>"#, with: "\n", options: .regularExpression)
+        html = html.replacingOccurrences(of: #"(?s)<[^>]+>"#, with: " ", options: .regularExpression)
+        html = decodeHTMLEntities(html)
+        html = html.replacingOccurrences(of: #"[\t ]+"#, with: " ", options: .regularExpression)
+        html = html.replacingOccurrences(of: #"\n\s*\n+"#, with: "\n\n", options: .regularExpression)
+        
+        return html.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     nonisolated private static func fetchReadableEvidence(
         from rawURL: String,
         query: String,
         networkSession: URLSession
     ) async -> String {
         guard let url = URL(string: rawURL), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return "" }
-        var request = URLRequest(url: url, timeoutInterval: 12)
+        var request = URLRequest(url: url, timeoutInterval: 8)
         request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36", forHTTPHeaderField: "User-Agent")
         request.setValue("bytes=0-262143", forHTTPHeaderField: "Range")
         do {
@@ -6532,67 +6664,97 @@ public final class ChatManager {
             let mime = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
             guard mime.contains("text") || mime.contains("html") || mime.isEmpty else { return "" }
             let bounded = data.prefix(262_144)
-            guard var text = String(data: bounded, encoding: .utf8) ?? String(data: bounded, encoding: .isoLatin1) else { return "" }
-            text = text
-                .replacingOccurrences(of: #"(?is)<script.*?</script>"#, with: " ", options: .regularExpression)
-                .replacingOccurrences(of: #"(?is)<style.*?</style>"#, with: " ", options: .regularExpression)
-                .replacingOccurrences(of: #"(?is)<noscript.*?</noscript>"#, with: " ", options: .regularExpression)
-                .replacingOccurrences(of: #"(?i)</?(?:p|li|article|section|h[1-6]|br)[^>]*>"#, with: "\n", options: .regularExpression)
-                .replacingOccurrences(of: #"(?s)<[^>]+>"#, with: " ", options: .regularExpression)
-                .replacingOccurrences(of: "&amp;", with: "&")
-                .replacingOccurrences(of: "&quot;", with: "\"")
-                .replacingOccurrences(of: "&#39;", with: "'")
-                .replacingOccurrences(of: "&nbsp;", with: " ")
-                .replacingOccurrences(of: #"[\t ]+"#, with: " ", options: .regularExpression)
-                .replacingOccurrences(of: #"\n\s*\n+"#, with: "\n", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard text.count >= 120 else { return "" }
-            return relevantEvidencePassage(from: text, query: query)
+            guard let text = String(data: bounded, encoding: .utf8) ?? String(data: bounded, encoding: .isoLatin1) else { return "" }
+            let markdown = convertHTMLToReadableMarkdown(text)
+            guard markdown.count >= 60 else { return "" }
+            return relevantEvidencePassage(from: markdown, query: query)
         } catch { return "" }
     }
 
     nonisolated private static func relevantEvidencePassage(from text: String, query: String) -> String {
         let stopWords: Set<String> = [
             "about", "and", "are", "authoritative", "current", "for", "from", "latest",
-            "official", "primary", "search", "source", "that", "the", "this", "use", "web", "with"
+            "official", "primary", "search", "source", "that", "the", "this", "use", "web", "with",
+            "what", "where", "when", "which", "will", "would", "could", "should", "your", "their"
         ]
         let terms = Set(query.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init).filter {
-            $0.count >= 3 && !stopWords.contains($0)
+            ($0.count >= 3 || $0.range(of: #"^[a-z]\d+$"#, options: .regularExpression) != nil) && !stopWords.contains($0)
         })
 
-        var candidates: [(index: Int, text: String, score: Double)] = []
-        var index = 0
-        text.enumerateSubstrings(in: text.startIndex..<text.endIndex, options: [.bySentences]) { substring, _, _, _ in
-            defer { index += 1 }
-            guard let substring else { return }
-            let sentence = substring
-                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard sentence.count >= 45 else { return }
-            let lower = sentence.lowercased()
-            let looksLikeStylesheet = lower.contains("@media") || lower.contains("font-family:") ||
-                lower.contains("position:") || lower.contains("{display:") ||
-                (sentence.contains("{") && sentence.contains("}"))
-            guard !looksLikeStylesheet else { return }
-            let matches = terms.filter { lower.contains($0) }.count
-            guard terms.isEmpty || matches > 0 else { return }
-            var score = terms.isEmpty ? 0.1 : Double(matches) / Double(terms.count)
-            if sentence.count >= 90 && sentence.count <= 480 { score += 0.08 }
-            if lower.contains("cookie") || lower.contains("privacy policy") || lower.contains("subscribe") { score -= 0.20 }
-            candidates.append((index, sentence, score))
+        let rawParagraphs = text.components(separatedBy: "\n\n")
+        var passages: [String] = []
+        for p in rawParagraphs {
+            let cleanP = p.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard cleanP.count >= 30 else { continue }
+            if cleanP.count > 650 && !cleanP.contains("|") {
+                var currentChunk = ""
+                cleanP.enumerateSubstrings(in: cleanP.startIndex..<cleanP.endIndex, options: [.bySentences]) { sentence, _, _, _ in
+                    guard let sentence else { return }
+                    if currentChunk.count + sentence.count > 500 {
+                        if !currentChunk.isEmpty { passages.append(currentChunk) }
+                        currentChunk = sentence
+                    } else {
+                        currentChunk += (currentChunk.isEmpty ? "" : " ") + sentence
+                    }
+                }
+                if !currentChunk.isEmpty { passages.append(currentChunk) }
+            } else {
+                passages.append(cleanP)
+            }
         }
 
-        let selected = candidates
+        guard !passages.isEmpty else { return String(text.prefix(1_200)) }
+
+        var scoredPassages: [(index: Int, text: String, score: Double)] = []
+        for (index, passage) in passages.enumerated() {
+            let lower = passage.lowercased()
+            
+            if lower.contains("@media") || lower.contains("font-family:") ||
+               lower.contains("cookie policy") || lower.contains("all rights reserved") ||
+               lower.contains("sign in to your account") || lower.contains("subscribe to our newsletter") {
+                continue
+            }
+            
+            var score = 0.0
+            let matchCount = terms.filter { lower.contains($0) }.count
+            guard terms.isEmpty || matchCount > 0 else { continue }
+            
+            score += terms.isEmpty ? 0.1 : (Double(matchCount) / Double(terms.count)) * 1.0
+            
+            if passage.contains("| --- |") || passage.contains("|") {
+                score += 0.35
+            } else if passage.hasPrefix("- ") || passage.contains("\n- ") {
+                score += 0.15
+            }
+            
+            for term in terms {
+                if term.range(of: #"\d"#, options: .regularExpression) != nil && lower.contains(term) {
+                    score += 0.20
+                }
+            }
+            
+            if passage.count >= 100 && passage.count <= 650 {
+                score += 0.10
+            }
+            
+            scoredPassages.append((index, passage, score))
+        }
+
+        let topPassages = scoredPassages
             .sorted {
                 if $0.score == $1.score { return $0.index < $1.index }
                 return $0.score > $1.score
             }
-            .prefix(5)
+            .prefix(4)
             .sorted { $0.index < $1.index }
             .map(\.text)
-            .joined(separator: " ")
-        guard !selected.isEmpty else { return "" }
-        return String(selected.prefix(1_200))
+            
+        guard !topPassages.isEmpty else {
+            return String(text.prefix(1_200))
+        }
+        
+        let result = topPassages.joined(separator: "\n\n")
+        return String(result.prefix(1_800))
     }
     
     private func extractString(from text: String, start: String, end: String) -> String {

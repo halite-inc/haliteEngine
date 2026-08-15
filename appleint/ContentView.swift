@@ -2780,74 +2780,49 @@ struct ContentView: View {
                     }
 
                     if !liveSources.isEmpty {
-                    Text("Thinking")
-                        .font(.system(size: 20, weight: .medium))
+                        Text("Thinking")
+                            .font(.system(size: 20, weight: .medium))
 
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "globe")
-                            .font(.system(size: 14))
-                            .frame(width: 20, height: 22)
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: "globe")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.teal)
+                                .frame(width: 20, height: 22)
 
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("\(manager.isGenerating ? "Searching" : "Searched") \(liveSources.count) \(liveSources.count == 1 ? "website" : "websites")")
-                                .font(.system(size: 15, weight: .medium))
-
-                            if !liveQueries.isEmpty {
-                                VStack(alignment: .leading, spacing: 7) {
-                                    Text(liveQueries.count == 1 ? "Exact query used" : "Exact queries used")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(.secondary)
-
-                                    ForEach(Array(liveQueries.enumerated()), id: \.offset) { index, query in
-                                        HStack(alignment: .top, spacing: 7) {
-                                            if liveQueries.count > 1 {
-                                                Text("\(index + 1).")
-                                                    .foregroundStyle(.tertiary)
-                                            }
-                                            Text(query)
-                                                .textSelection(.enabled)
-                                                .fixedSize(horizontal: false, vertical: true)
-                                        }
-                                        .font(.system(size: 12.5, design: .monospaced))
-                                        .foregroundStyle(.primary)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 8)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack(spacing: 6) {
+                                    Text("\(manager.isGenerating ? "Searching" : "Searched") \(liveSources.count) \(liveSources.count == 1 ? "website" : "websites")")
+                                        .font(.system(size: 15, weight: .medium))
+                                    
+                                    if manager.isGenerating {
+                                        ProgressView()
+                                            .controlSize(.mini)
                                     }
                                 }
-                            }
 
-                            ActivityFlowLayout(spacing: 7) {
-                                ForEach(Array(liveSources.enumerated()), id: \.offset) { _, source in
-                                    if let destination = URL(string: source.url) {
-                                        Link(destination: destination) {
-                                            HStack(spacing: 6) {
-                                                let host = destination.host() ?? source.url
-                                                if let faviconURL = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=32") {
-                                                    AsyncImage(url: faviconURL) { image in
-                                                        image.resizable().scaledToFit()
-                                                    } placeholder: {
-                                                        Image(systemName: "globe")
-                                                    }
-                                                    .frame(width: 14, height: 14)
-                                                    .clipShape(Circle())
-                                                }
-                                                Text(host)
-                                                    .lineLimit(1)
-                                            }
-                                            .font(.system(size: 13))
+                                if !liveQueries.isEmpty {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(liveQueries.count == 1 ? "Exact query used" : "Exact queries used")
+                                            .font(.system(size: 12, weight: .semibold))
                                             .foregroundStyle(.secondary)
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 6)
-                                            .background(Color.primary.opacity(0.09), in: Capsule())
+
+                                        ForEach(Array(liveQueries.enumerated()), id: \.offset) { index, query in
+                                            SearchQueryRowView(
+                                                index: index,
+                                                totalCount: liveQueries.count,
+                                                query: query
+                                            )
                                         }
-                                        .buttonStyle(.plain)
+                                    }
+                                }
+
+                                ActivityFlowLayout(spacing: 7) {
+                                    ForEach(Array(liveSources.enumerated()), id: \.offset) { _, source in
+                                        SearchSourceCapsuleView(source: source)
                                     }
                                 }
                             }
                         }
-                    }
                     }
 
                     HStack(alignment: .top, spacing: 12) {
@@ -5453,6 +5428,117 @@ struct CrystalizingText: View {
         .fixedSize(horizontal: true, vertical: false)
         .onReceive(timer) { _ in
             sparkleIndex = (sparkleIndex + 1) % max(label.count, 1)
+        }
+    }
+}
+
+struct SearchQueryRowView: View {
+    let index: Int
+    let totalCount: Int
+    let query: String
+    
+    @State private var copied = false
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            if totalCount > 1 {
+                Text("\(index + 1).")
+                    .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+            
+            Text(query)
+                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            
+            Spacer()
+            
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(query, forType: .string)
+                withAnimation { copied = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation { copied = false }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    if copied {
+                        Text("Copied")
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                }
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(copied ? Color.green : Color.secondary)
+                .opacity(isHovered || copied ? 1.0 : 0.4)
+            }
+            .buttonStyle(.plain)
+            .help("Copy search query")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(isHovered ? 0.08 : 0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.primary.opacity(isHovered ? 0.14 : 0.06), lineWidth: 1)
+        )
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
+struct SearchSourceCapsuleView: View {
+    let source: (url: String, title: String)
+    @State private var isHovered = false
+
+    var body: some View {
+        if let destination = URL(string: source.url) {
+            Link(destination: destination) {
+                HStack(spacing: 6) {
+                    let host = destination.host() ?? source.url
+                    if let faviconURL = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=32") {
+                        AsyncImage(url: faviconURL) { image in
+                            image.resizable().scaledToFit()
+                        } placeholder: {
+                            Image(systemName: "globe")
+                                .font(.system(size: 10))
+                        }
+                        .frame(width: 13, height: 13)
+                        .clipShape(Circle())
+                    }
+                    Text(host.replacingOccurrences(of: "www.", with: ""))
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(isHovered ? .primary : .secondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(Color.primary.opacity(isHovered ? 0.12 : 0.06))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(Color.primary.opacity(isHovered ? 0.18 : 0.08), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .help(source.title.isEmpty ? source.url : "\(source.title)\n\(source.url)")
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isHovered = hovering
+                }
+            }
         }
     }
 }

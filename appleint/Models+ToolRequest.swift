@@ -142,6 +142,7 @@ public struct ToolRequest: Codable, Identifiable {
     public var displayMode: String? // sequential, form
     public var html: String? // custom HTML/JS code for Tesaract
     public var query: String? // Search query for internet_use
+    public var queries: [String]? // Multi-query search support for internet_use
     public var nodes: [MemoryNode]?
     public var edges: [MemoryEdge]?
     public var action: String? // for file_system (list, create_file, create_folder, read_file, execute_command)
@@ -189,7 +190,7 @@ public struct ToolRequest: Codable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case type, title, description, fields, displayMode, html, query, nodes, edges, action, path, content, command, files, taskId, dueDate, isCompleted, groupName, position, learningId, learningKind, learningTopic, mcpServer, mcpTool, mcpArguments
+        case type, title, description, fields, displayMode, html, query, queries, nodes, edges, action, path, content, command, files, taskId, dueDate, isCompleted, groupName, position, learningId, learningKind, learningTopic, mcpServer, mcpTool, mcpArguments
     }
 
     public init(from decoder: Decoder) throws {
@@ -215,6 +216,7 @@ public struct ToolRequest: Codable, Identifiable {
         displayMode = try container.decodeIfPresent(String.self, forKey: .displayMode)
         html = try container.decodeIfPresent(String.self, forKey: .html)
         query = try container.decodeIfPresent(String.self, forKey: .query)
+        queries = try container.decodeIfPresent([String].self, forKey: .queries)
         nodes = try container.decodeIfPresent([MemoryNode].self, forKey: .nodes)
         edges = try container.decodeIfPresent([MemoryEdge].self, forKey: .edges)
         action = try container.decodeIfPresent(String.self, forKey: .action)
@@ -235,7 +237,7 @@ public struct ToolRequest: Codable, Identifiable {
         mcpArguments = try container.decodeIfPresent([String: AgentValue].self, forKey: .mcpArguments)
     }
 
-    public init(type: String?, title: String, description: String, fields: [ToolField], displayMode: String? = nil, html: String? = nil, query: String? = nil, nodes: [MemoryNode]? = nil, edges: [MemoryEdge]? = nil, action: String? = nil, path: String? = nil, content: String? = nil, command: String? = nil, files: [GeneratedFile]? = nil, taskId: UUID? = nil, dueDate: String? = nil, isCompleted: Bool? = nil, groupName: String? = nil, position: Int? = nil, learningId: String? = nil, learningKind: String? = nil, learningTopic: String? = nil, mcpServer: String? = nil, mcpTool: String? = nil, mcpArguments: [String: AgentValue]? = nil) {
+    public init(type: String?, title: String, description: String, fields: [ToolField], displayMode: String? = nil, html: String? = nil, query: String? = nil, queries: [String]? = nil, nodes: [MemoryNode]? = nil, edges: [MemoryEdge]? = nil, action: String? = nil, path: String? = nil, content: String? = nil, command: String? = nil, files: [GeneratedFile]? = nil, taskId: UUID? = nil, dueDate: String? = nil, isCompleted: Bool? = nil, groupName: String? = nil, position: Int? = nil, learningId: String? = nil, learningKind: String? = nil, learningTopic: String? = nil, mcpServer: String? = nil, mcpTool: String? = nil, mcpArguments: [String: AgentValue]? = nil) {
         self.type = type
         self.title = title
         self.description = description
@@ -243,6 +245,7 @@ public struct ToolRequest: Codable, Identifiable {
         self.displayMode = displayMode
         self.html = html
         self.query = query
+        self.queries = queries
         self.nodes = nodes
         self.edges = edges
         self.action = action
@@ -272,6 +275,7 @@ public struct ToolRequest: Codable, Identifiable {
         try container.encodeIfPresent(displayMode, forKey: .displayMode)
         try container.encodeIfPresent(html, forKey: .html)
         try container.encodeIfPresent(query, forKey: .query)
+        try container.encodeIfPresent(queries, forKey: .queries)
         try container.encodeIfPresent(nodes, forKey: .nodes)
         try container.encodeIfPresent(edges, forKey: .edges)
         try container.encodeIfPresent(action, forKey: .action)
@@ -779,18 +783,21 @@ public struct ToolRequestParser {
             // Search models sometimes emit only {"query":"…"}. Restrict
             // this inference to objects whose keys are all search metadata so
             // ordinary JSON data with a query field is not treated as a tool.
-            if let raw = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-               let query = raw["query"] as? String,
-               !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let allowedSearchKeys: Set<String> = ["query", "title", "description", "type", "tool", "tool_name", "name"]
-                if Set(raw.keys).isSubset(of: allowedSearchKeys) {
-                    return ToolRequest(
-                        type: "internet_use",
-                        title: raw["title"] as? String ?? "Searching the web",
-                        description: raw["description"] as? String ?? "Retrieving current information",
-                        fields: [],
-                        query: query
-                    )
+            if let raw = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                let singleQuery = (raw["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let multiQueries = (raw["queries"] as? [String])?.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                if (singleQuery != nil && !singleQuery!.isEmpty) || (multiQueries != nil && !multiQueries!.isEmpty) {
+                    let allowedSearchKeys: Set<String> = ["query", "queries", "title", "description", "type", "tool", "tool_name", "name"]
+                    if Set(raw.keys).isSubset(of: allowedSearchKeys) {
+                        return ToolRequest(
+                            type: "internet_use",
+                            title: raw["title"] as? String ?? "Searching the web",
+                            description: raw["description"] as? String ?? "Retrieving current information",
+                            fields: [],
+                            query: singleQuery ?? multiQueries?.first,
+                            queries: multiQueries
+                        )
+                    }
                 }
             }
             
