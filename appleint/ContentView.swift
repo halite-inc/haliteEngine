@@ -1562,8 +1562,15 @@ struct ContentView: View {
                         modelPopoverView(for: thread)
                     }
                 }
+            }
 
-                // Share Menu Button (anchored to main chat header, outside right sidebar)
+            ToolbarItemGroup(placement: .primaryAction) {
+                let pickerWidth: CGFloat = thread.showSystemMessages
+                    ? (rightSidebarSources.isEmpty ? 200 : 250)
+                    : (rightSidebarSources.isEmpty ? 130 : 160)
+                let sidebarGap: CGFloat = max(16, rightSidebarWidth - pickerWidth - 44 + 18)
+
+                // Share Menu Button (anchored to the right of the chat area, outside right sidebar)
                 Menu {
                     Button {
                         copyTranscript(for: thread)
@@ -1581,9 +1588,8 @@ struct ContentView: View {
                 }
                 .help("Share Transcript")
                 .disabled(thread.messages.isEmpty)
-            }
+                .padding(.trailing, showRightSidebar ? sidebarGap : 0)
 
-            ToolbarItemGroup(placement: .primaryAction) {
                 if showRightSidebar {
                     Picker("Sidebar Panel", selection: Binding(
                         get: { rightSidebarTab },
@@ -1603,9 +1609,7 @@ struct ContentView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: thread.showSystemMessages
-                        ? (rightSidebarSources.isEmpty ? 200 : 250)
-                        : (rightSidebarSources.isEmpty ? 130 : 160))
+                    .frame(width: pickerWidth)
                 }
 
                 // Toggle Right Sidebar Button (placed at far right most position)
