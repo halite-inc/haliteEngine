@@ -4252,6 +4252,23 @@ public final class ChatManager {
         if !crossCheckPrompt.isEmpty { components.append(crossCheckPrompt) }
         if !liveSearchRequirement.isEmpty { components.append(liveSearchRequirement) }
         if !localClockPrompt.isEmpty { components.append(localClockPrompt) }
+        let isContinuationPrompt: Bool = {
+            let lower = effectiveRequest.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return [
+                "continue", "continue.", "continue from where you left off", "continue from where you left off.",
+                "go on", "go on.", "proceed", "proceed.", "keep going", "keep going.", "continue answering"
+            ].contains(lower) || (lower.hasPrefix("continue") && lower.count < 40)
+        }()
+        var continuationPrompt = ""
+        if isContinuationPrompt,
+           let prevUserMsg = threads.first(where: { $0.id == threadId })?.messages.reversed().first(where: {
+               $0.role == .user && !$0.isToolResponse && $0.text.trimmingCharacters(in: .whitespacesAndNewlines) != effectiveRequest
+           })?.text.trimmingCharacters(in: .whitespacesAndNewlines),
+           !prevUserMsg.isEmpty {
+            continuationPrompt = "[CONTINUATION CONTEXT]\nThe user is prompting you to continue with the previous task: \"\(prevUserMsg)\". Rely on the conversation history and any retrieved evidence above to produce the direct, complete answer now. Do not output a generic disclaimer claiming you lack history."
+        }
+
+        if !continuationPrompt.isEmpty { components.append(continuationPrompt) }
         if !constraintPrompt.isEmpty { components.append(constraintPrompt) }
         if !toolPrompt.isEmpty { components.append(toolPrompt) }
         if !memoryPrompt.isEmpty { components.append(memoryPrompt) }
