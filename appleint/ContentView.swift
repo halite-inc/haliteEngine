@@ -1859,10 +1859,6 @@ struct ContentView: View {
                                     let hasInsights = request.fields.contains(where: { $0.type == .insight })
                                     
                                     VStack(alignment: .leading, spacing: isCompactHeader ? 2 : 8) {
-                                        if !intro.isEmpty && !hasInsights && request.type != "file_system" && request.type != "advanced_memory" && request.type != "learning" {
-                                            Divider()
-                                        }
-                                        
                                         if request.type == "internet_use" {
                                             // One status row represents the whole web-search phase,
                                             // even when the model issues several refinement queries.
@@ -1882,7 +1878,7 @@ struct ContentView: View {
                                                             font: .system(size: 13, weight: .medium)
                                                         )
                                                     }
-                                                    .padding(.vertical, 2)
+                                                    .padding(.vertical, 4)
                                                 } else {
                                                     Group {
                                                         Button {
@@ -1905,7 +1901,7 @@ struct ContentView: View {
                                                         .buttonStyle(.plain)
                                                         .help("Open web sources in the Activity sidebar")
                                                     }
-                                                    .padding(.vertical, 2)
+                                                    .padding(.vertical, 4)
                                                 }
                                             }
                                         } else {
@@ -1958,10 +1954,6 @@ struct ContentView: View {
                                 }
                                 
                                 if !conclusion.isEmpty {
-                                    let hasInsights = toolRequest?.fields.contains(where: { $0.type == .insight }) ?? false
-                                    if toolRequest != nil && !hasInsights && toolRequest?.type != "file_system" && toolRequest?.type != "advanced_memory" && toolRequest?.type != "learning" {
-                                        Divider()
-                                    }
                                     MarkdownView(
                                         text: conclusion,
                                         isGenerating: isCurrentlyStreaming,
@@ -6316,14 +6308,14 @@ struct MarkdownView: View {
                         Group {
                             if indentLevel == 0 {
                                 Circle()
-                                    .fill(Color.blue.opacity(0.8))
+                                    .fill(Color.blue.opacity(0.85))
                                     .frame(width: 5, height: 5)
-                                    .padding(.top, 6.5)
+                                    .padding(.top, 7)
                             } else if indentLevel == 1 {
                                 Circle()
                                     .stroke(Color.primary.opacity(0.5), lineWidth: 1.2)
                                     .frame(width: 4.5, height: 4.5)
-                                    .padding(.top, 6.5)
+                                    .padding(.top, 7)
                             } else {
                                 Rectangle()
                                     .fill(Color.secondary)
@@ -6340,7 +6332,7 @@ struct MarkdownView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.leading, CGFloat(indentLevel == 0 ? 4 : (indentLevel * 18)))
-                    .padding(.vertical, 1)
+                    .padding(.vertical, 2.5)
                     
                 case .callout(let title, let calloutText, let type):
                     HStack(alignment: .top, spacing: 10) {
