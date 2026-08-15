@@ -335,9 +335,28 @@ public struct ToolRequestParser {
     /// When models describe commands in markdown code blocks after failures (e.g. ```bash brew install ...```),
     /// parse them as an execute_command tool call so the agent automatically continues execution without stalling.
     private static func parseCommandBlockToolCall(_ text: String) -> ToolRequest? {
+        let lower = text.lowercased()
+        let isTutorialOrRefusal = lower.contains("i cannot") ||
+                                  lower.contains("i can't") ||
+                                  lower.contains("restricted from") ||
+                                  lower.contains("security and privacy reasons") ||
+                                  lower.contains("follow these steps") ||
+                                  lower.contains("steps yourself") ||
+                                  lower.contains("you will need to") ||
+                                  lower.contains("you can run") ||
+                                  lower.contains("you can start") ||
+                                  lower.contains("try running") ||
+                                  lower.contains("how to start") ||
+                                  lower.contains("start using it")
+        if isTutorialOrRefusal {
+            return nil
+        }
+
         let pattern = #"(?is)```(?:bash|zsh|sh|shell)\s*\n(.*?)```"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        guard matches.count == 1,
+              let match = matches.first,
               let cmdRange = Range(match.range(at: 1), in: text) else { return nil }
 
         var cmd = String(text[cmdRange]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -354,14 +373,16 @@ public struct ToolRequestParser {
             cmd = String(cmd.dropFirst("zsh -c \"".count).dropLast(1))
         }
 
-        let lower = text.lowercased()
-        let hasExecutionIntent = lower.contains("run") ||
-                                lower.contains("execut") ||
-                                lower.contains("install") ||
-                                lower.contains("check") ||
-                                lower.contains("command") ||
-                                text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("```")
-        guard hasExecutionIntent else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isSoleCodeBlock = trimmed.hasPrefix("```") && trimmed.hasSuffix("```")
+        let hasDirectExecutionIntent = lower.contains("i will run") ||
+                                      lower.contains("i'll run") ||
+                                      lower.contains("let's run") ||
+                                      lower.contains("running the following") ||
+                                      lower.contains("executing the command") ||
+                                      lower.contains("executing:") ||
+                                      isSoleCodeBlock
+        guard hasDirectExecutionIntent else { return nil }
 
         return ToolRequest(
             type: "file_system",
