@@ -4183,13 +4183,10 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
 
                         ScrollView {
-                            Text(release.changelog)
-                                .font(.system(size: 13, design: .default))
-                                .foregroundStyle(.primary)
+                            MarkdownView(text: release.changelog)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .textSelection(.enabled)
                         }
-                        .frame(maxHeight: 180)
+                        .frame(maxHeight: 220)
                     }
                 }
                 .padding(22)
