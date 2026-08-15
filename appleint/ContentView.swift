@@ -4274,6 +4274,11 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+                    Button("Cancel") {
+                        updateManager.state = .idle
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
                 .padding(20)
                 .background(Color.cyan.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))

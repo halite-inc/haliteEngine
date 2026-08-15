@@ -295,30 +295,35 @@ public final class UpdateManager: ObservableObject {
                 }
 
                 // Create helper updater script
-                let updaterScriptPath = "/tmp/halite_in_place_updater.sh"
+                let scriptId = UUID().uuidString
+                let updaterScriptPath = "/tmp/halite_updater_\(scriptId).sh"
                 let scriptContent = """
                 #!/bin/bash
-                set -e
                 
-                # Wait for running app PID \(pid) to exit
-                while kill -0 \(pid) 2>/dev/null; do
+                # Wait up to 3 seconds for app PID \(pid) to exit cleanly
+                for i in {1..15}; do
+                    if ! kill -0 \(pid) 2>/dev/null; then
+                        break
+                    fi
                     sleep 0.2
                 done
                 
-                sleep 0.4
+                # Force kill PID if still alive
+                kill -9 \(pid) 2>/dev/null || true
+                sleep 0.3
                 
                 # Replace the target application bundle
                 if [ -d "\(currentAppPath)" ]; then
                     rm -rf "\(currentAppPath)"
                 fi
                 
-                cp -R "\(newAppPath)" "\(currentAppPath)"
+                /usr/bin/ditto "\(newAppPath)" "\(currentAppPath)"
                 
                 # Remove quarantine attribute
-                xattr -dr com.apple.quarantine "\(currentAppPath)" 2>/dev/null || true
+                /usr/bin/xattr -dr com.apple.quarantine "\(currentAppPath)" 2>/dev/null || true
                 
                 # Relaunch the new application
-                open "\(currentAppPath)"
+                /usr/bin/open "\(currentAppPath)"
                 
                 # Cleanup staging
                 rm -rf "\(stagingDir.path)"
@@ -338,12 +343,16 @@ public final class UpdateManager: ObservableObject {
                 // Launch updater script in background detached
                 let launcherProcess = Process()
                 launcherProcess.executableURL = URL(fileURLWithPath: "/bin/bash")
-                launcherProcess.arguments = ["-c", "nohup /bin/bash \(updaterScriptPath) >/dev/null 2>&1 &"]
+                launcherProcess.arguments = ["-c", "nohup /bin/bash \"\(updaterScriptPath)\" >/tmp/halite_updater.log 2>&1 &"]
                 try launcherProcess.run()
 
-                // Gracefully quit the running app
+                // Immediately terminate the running app
                 DispatchQueue.main.async {
-                    NSApplication.shared.terminate(nil)
+                    NSApp.windows.forEach { $0.close() }
+                    NSApp.terminate(nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        exit(0)
+                    }
                 }
             } catch {
                 Task { @MainActor in
