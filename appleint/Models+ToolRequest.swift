@@ -1214,12 +1214,6 @@ extension ChatMessage {
         if let start = raw.range(of: "<tool_call>") {
             raw.removeSubrange(start.lowerBound..<raw.endIndex)
         }
-        // Hide the local-model variant that wraps an unexecuted command in a
-        // `tool_response` JSON object. The original text is still parsed and
-        // executed by ToolRequestParser.
-        if raw.contains("\"command\"") && raw.contains("\"action\"") && !raw.contains("\"type\"") {
-            raw = ""
-        }
         
         // 1. Check GLM format with <|begin_of_box|> ... <|begin_of_box|> ... <|end_of_box|>
         if raw.contains("<|begin_of_box|>") {
@@ -1303,20 +1297,16 @@ extension ChatMessage {
         if lowerClean.hasPrefix("thought\n") || lowerClean.hasPrefix("thought:\n") {
             let actualRaw = cleanText.trimmingCharacters(in: .whitespacesAndNewlines)
             
-            // Find the start of the next block. A good heuristic is ``` (which usually indicates a tool call or the actual response block)
+            // Find the start of the next block.
             if let backtickRange = actualRaw.range(of: "```") {
                 let reasoning = String(actualRaw[..<backtickRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-                // Remove the "thought" prefix
                 let cleanedReasoning = reasoning.replacingOccurrences(of: "^(?i)thought:?\\s*", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
                 let main = String(actualRaw[backtickRange.lowerBound...])
                 return ParsedReasoningResponse(reasoningText: cleanedReasoning.isEmpty ? nil : cleanedReasoning, mainText: main, isThinkingComplete: true)
             } else {
                 let cleanedReasoning = actualRaw.replacingOccurrences(of: "^(?i)thought:?\\s*", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
-                // This is a local-model reasoning-only format. It has no
-                // delimiter for user-facing prose, so rendering it as the
-                // answer both duplicates the thought in the UI and feeds it
-                // back as an assistant answer on the next turn.
-                return ParsedReasoningResponse(reasoningText: cleanedReasoning.isEmpty ? nil : cleanedReasoning, mainText: "", isThinkingComplete: true)
+                // Never zero out mainText; make sure the content remains visible
+                return ParsedReasoningResponse(reasoningText: cleanedReasoning.isEmpty ? nil : cleanedReasoning, mainText: actualRaw, isThinkingComplete: true)
             }
         }
         

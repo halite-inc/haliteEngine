@@ -1762,9 +1762,8 @@ struct ContentView: View {
                             // Tool calls have a dedicated activity card. Never
                             // render the model's raw transport envelope as
                             // Markdown above or below that card.
-                            let isToolTransport = ["file_system", "task_management", "internet_use"].contains(toolRequest?.type ?? "")
-                            let intro = isToolTransport ? "" : message.introText
-                            let conclusion = isToolTransport ? "" : message.conclusionText
+                            let intro = message.introText
+                            let conclusion = message.conclusionText
                             let isCompactHeader = toolRequest?.type == "advanced_memory" || toolRequest?.type == "learning" || toolRequest?.type == "file_system"
                             VStack(alignment: .leading, spacing: isCompactHeader ? 4 : 12) {
                                 if let reasoning = reasoningText, !reasoning.isEmpty {
@@ -1779,6 +1778,13 @@ struct ContentView: View {
                                 if !intro.isEmpty {
                                     MarkdownView(
                                         text: intro,
+                                        isGenerating: isCurrentlyStreaming,
+                                        advancedRender: advancedRender,
+                                        sourceLinks: responseSources
+                                    )
+                                } else if toolRequest == nil && !mainContentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    MarkdownView(
+                                        text: mainContentText,
                                         isGenerating: isCurrentlyStreaming,
                                         advancedRender: advancedRender,
                                         sourceLinks: responseSources
