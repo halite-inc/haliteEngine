@@ -1851,6 +1851,7 @@ struct ContentView: View {
                                                 font: .system(size: 13, weight: .medium)
                                             )
                                         }
+                                        .padding(.bottom, 6)
                                     } else if message.isStreamingFileSystemJSON {
                                         TerminalExecutingView()
                                     } else if message.isStreamingTaskJSON {
@@ -1870,40 +1871,43 @@ struct ContentView: View {
                                              let isSearching = manager.toolRequestManager.isProcessing(threadId: thread.id) || (isCurrentlyStreaming && conclusion.isEmpty)
                                              let activitySources = searchLinksForSearchActivity(startingAt: message, in: thread)
 
-                                             if isSearching {
-                                                 HStack(spacing: 7) {
-                                                     ProgressView()
-                                                         .controlSize(.small)
-                                                     CrystalizingText(
-                                                         label: "Searching web…",
-                                                         font: .system(size: 13, weight: .medium)
-                                                     )
-                                                 }
-                                             } else {
-                                                 Button {
-                                                     if !activitySources.isEmpty {
-                                                         openSourcesSidebar(sources: activitySources, messageID: message.id)
-                                                     }
-                                                 } label: {
+                                             Group {
+                                                 if isSearching {
                                                      HStack(spacing: 7) {
-                                                         Image(systemName: "globe.americas.fill")
-                                                             .font(.system(size: 12, weight: .semibold))
-                                                             .foregroundStyle(.blue)
-                                                         Text("Searched the web")
-                                                             .font(.system(size: 13, weight: .medium))
-                                                             .foregroundStyle(.secondary)
-                                                         Spacer()
-                                                         if !activitySources.isEmpty {
-                                                             Image(systemName: "chevron.right")
-                                                                 .font(.system(size: 9, weight: .semibold))
-                                                                 .foregroundStyle(.tertiary)
-                                                         }
+                                                         ProgressView()
+                                                             .controlSize(.small)
+                                                         CrystalizingText(
+                                                             label: "Searching web…",
+                                                             font: .system(size: 13, weight: .medium)
+                                                         )
                                                      }
-                                                     .contentShape(Rectangle())
+                                                 } else {
+                                                     Button {
+                                                         if !activitySources.isEmpty {
+                                                             openSourcesSidebar(sources: activitySources, messageID: message.id)
+                                                         }
+                                                     } label: {
+                                                         HStack(spacing: 7) {
+                                                             Image(systemName: "globe.americas.fill")
+                                                                 .font(.system(size: 12, weight: .semibold))
+                                                                 .foregroundStyle(.blue)
+                                                             Text("Searched the web")
+                                                                 .font(.system(size: 13, weight: .medium))
+                                                                 .foregroundStyle(.secondary)
+                                                             Spacer()
+                                                             if !activitySources.isEmpty {
+                                                                 Image(systemName: "chevron.right")
+                                                                     .font(.system(size: 9, weight: .semibold))
+                                                                     .foregroundStyle(.tertiary)
+                                                             }
+                                                         }
+                                                         .contentShape(Rectangle())
+                                                     }
+                                                     .buttonStyle(.plain)
+                                                     .help("Open web sources in the Activity sidebar")
                                                  }
-                                                 .buttonStyle(.plain)
-                                                 .help("Open web sources in the Activity sidebar")
                                              }
+                                             .padding(.bottom, 6)
                                          } else {
                                             // Inline Title and Description header card in chat
                                             if !hasInsights {
