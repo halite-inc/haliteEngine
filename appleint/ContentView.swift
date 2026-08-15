@@ -1997,7 +1997,7 @@ struct ContentView: View {
                                 let turnSources = responseSources
                                 if isFinalAssistantMessage && (message.generationStartTime != nil || !turnSources.isEmpty) {
                                     
-                                    HStack(spacing: 7) {
+                                    HStack(alignment: .center, spacing: 6) {
                                         // Statistics are informational only. Keep destructive and
                                         // retry actions as distinct controls so they cannot be
                                         // mistaken for part of the metrics badge.
@@ -2018,14 +2018,12 @@ struct ContentView: View {
                                             .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                                             .foregroundStyle(.secondary.opacity(0.75))
                                             .padding(.horizontal, 8)
-                                            .padding(.vertical, 3)
+                                            .padding(.vertical, 3.5)
                                             .background(Capsule().fill(Color.primary.opacity(0.04)).overlay(Capsule().stroke(Color.secondary.opacity(0.1), lineWidth: 0.5)))
-                                            .padding(.top, 4)
                                         }
 
                                         if !turnSources.isEmpty {
                                             sourcesButton(sources: turnSources, messageID: message.id)
-                                                .padding(.top, 4)
                                         }
 
                                     MessageActionIconButton(
@@ -2061,6 +2059,7 @@ struct ContentView: View {
                                     }
 
                                 }
+                                .padding(.top, 6)
                             }
                             }
                             .assistantBubbleContainer(
@@ -2080,48 +2079,13 @@ struct ContentView: View {
 
     @ViewBuilder
     private func sourcesButton(sources: [(title: String, url: String)], messageID: UUID) -> some View {
-        Button {
+        SourcesPillButton(sources: sources) {
             if NSEvent.modifierFlags.contains(.shift) {
                 openSourcesSidebar(sources: sources, messageID: messageID)
             } else {
                 sourcePopoverMessageID = sourcePopoverMessageID == messageID ? nil : messageID
             }
-        } label: {
-            HStack(spacing: 8) {
-                HStack(spacing: -6) {
-                    ForEach(Array(sources.prefix(3).enumerated()), id: \.offset) { _, source in
-                        let host = URL(string: source.url)?.host() ?? ""
-                        ZStack {
-                            Circle().fill(Color(nsColor: .windowBackgroundColor))
-                            if let faviconURL = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=32") {
-                                AsyncImage(url: faviconURL) { image in
-                                    image
-                                        .resizable()
-                                        .scaledToFill()
-                                        .clipShape(Circle())
-                                } placeholder: {
-                                    Image(systemName: "globe").font(.system(size: 9, weight: .bold))
-                                }
-                                .frame(width: 20, height: 20)
-                                .clipShape(Circle())
-                            }
-                        }
-                        .frame(width: 22, height: 22)
-                        .clipShape(Circle())
-                    }
-                }
-                Text("Sources")
-                    .font(.system(size: 12, weight: .semibold))
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.tertiary)
-            }
-            .foregroundStyle(.secondary)
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .help("Show web source links (Shift-click to open in right panel)")
         .popover(isPresented: Binding(
             get: { sourcePopoverMessageID == messageID },
             set: { if !$0 { sourcePopoverMessageID = nil } }
@@ -4913,6 +4877,66 @@ struct BubbleShape: Shape {
             cornerHeight: radius
         )
         return Path(path)
+    }
+}
+
+private struct SourcesPillButton: View {
+    let sources: [(title: String, url: String)]
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if !sources.isEmpty {
+                    HStack(spacing: -5) {
+                        ForEach(Array(sources.prefix(3).enumerated()), id: \.offset) { _, source in
+                            let host = URL(string: source.url)?.host() ?? ""
+                            ZStack {
+                                Circle().fill(Color(nsColor: .windowBackgroundColor))
+                                if let faviconURL = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=32") {
+                                    AsyncImage(url: faviconURL) { image in
+                                        image
+                                            .resizable()
+                                            .scaledToFill()
+                                            .clipShape(Circle())
+                                    } placeholder: {
+                                        Image(systemName: "globe")
+                                            .font(.system(size: 7, weight: .bold))
+                                    }
+                                    .frame(width: 14, height: 14)
+                                    .clipShape(Circle())
+                                }
+                            }
+                            .frame(width: 15, height: 15)
+                            .clipShape(Circle())
+                            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1))
+                        }
+                    }
+                }
+                Text("Sources")
+                    .font(.system(size: 9.5, weight: .medium))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .foregroundStyle(.secondary.opacity(isHovered ? 1.0 : 0.75))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3.5)
+            .background(
+                Capsule()
+                    .fill(isHovered ? Color.primary.opacity(0.08) : Color.primary.opacity(0.04))
+                    .overlay(Capsule().stroke(Color.secondary.opacity(isHovered ? 0.2 : 0.1), lineWidth: 0.5))
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Show web source links (Shift-click to open in right panel)")
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovered = hovering
+            }
+        }
     }
 }
 
