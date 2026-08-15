@@ -1531,20 +1531,6 @@ struct ContentView: View {
         .navigationTitle("")
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
-                Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        showTerminalPanel.toggle()
-                    }
-                } label: {
-                    Label("Terminal", systemImage: "terminal.fill")
-                        .foregroundStyle(showTerminalPanel ? .green : .secondary)
-                }
-                .help(showTerminalPanel ? "Hide Terminal" : "Show Live Terminal")
-
-                UserDeveloperSliderToggle(isDeveloper: thread.showSystemMessages) { isDeveloper in
-                    manager.updateShowSystemMessages(id: thread.id, show: isDeveloper)
-                }
-
                 if !useCenteredModelLook {
                     Button {
                         showModelPopover.toggle()
@@ -1565,6 +1551,22 @@ struct ContentView: View {
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
+                // Terminal Button
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        showTerminalPanel.toggle()
+                    }
+                } label: {
+                    Label("Terminal", systemImage: "terminal.fill")
+                        .foregroundStyle(showTerminalPanel ? .green : .secondary)
+                }
+                .help(showTerminalPanel ? "Hide Terminal" : "Show Live Terminal")
+
+                // Default | Developer Mode Slider
+                UserDeveloperSliderToggle(isDeveloper: thread.showSystemMessages) { isDeveloper in
+                    manager.updateShowSystemMessages(id: thread.id, show: isDeveloper)
+                }
+
                 // Share Menu Button
                 Menu {
                     Button {
