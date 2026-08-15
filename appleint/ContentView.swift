@@ -88,114 +88,70 @@ private struct EffortPopoverView: View {
     @State private var hoveredLevel: AIEffortLevel? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header with animated Energy Badge
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(level.color.opacity(0.15))
-                        .frame(width: 32, height: 32)
-                    Image(systemName: level.icon)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(level.color)
-                }
+        VStack(spacing: 5) {
+            ForEach(AIEffortLevel.allCases) { item in
+                let isSelected = (item == level)
+                let isHovered = (hoveredLevel == item)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 5) {
-                        Text("Reasoning Effort")
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                        Text(level.emoji)
-                            .font(.system(size: 12))
+                Button {
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
+                        onSelect(item)
                     }
-                    Text("Controls depth & compute power")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
-                }
+                } label: {
+                    HStack(spacing: 10) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(isSelected ? item.color : (isHovered ? item.color.opacity(0.15) : Color.primary.opacity(0.05)))
+                                .frame(width: 26, height: 26)
 
-                Spacer()
-
-                // Power Level Indicator Dots
-                HStack(spacing: 3) {
-                    ForEach(1...4, id: \.self) { dot in
-                        Capsule()
-                            .fill(dot <= level.powerLevel ? level.color : Color.secondary.opacity(0.2))
-                            .frame(width: dot <= level.powerLevel ? 9 : 5, height: 4.5)
-                            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: level)
-                    }
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.04), in: Capsule())
-            }
-
-            Divider().opacity(0.4)
-
-            // 4 Playful Interactive Level Tiles
-            VStack(spacing: 5) {
-                ForEach(AIEffortLevel.allCases) { item in
-                    let isSelected = (item == level)
-                    let isHovered = (hoveredLevel == item)
-
-                    Button {
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.75)) {
-                            onSelect(item)
+                            Image(systemName: item.icon)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(isSelected ? .white : (isHovered ? item.color : .secondary))
                         }
-                    } label: {
-                        HStack(spacing: 10) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .fill(isSelected ? item.color : (isHovered ? item.color.opacity(0.15) : Color.primary.opacity(0.05)))
-                                    .frame(width: 26, height: 26)
 
-                                Image(systemName: item.icon)
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .foregroundStyle(isSelected ? .white : (isHovered ? item.color : .secondary))
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 4) {
+                                Text(item.rawValue)
+                                    .font(.system(size: 11.5, weight: isSelected ? .bold : .semibold))
+                                    .foregroundStyle(isSelected ? item.color : .primary)
+                                Text("• \(item.tagline)")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(isSelected ? item.color.opacity(0.8) : .secondary)
                             }
-
-                            VStack(alignment: .leading, spacing: 1) {
-                                HStack(spacing: 4) {
-                                    Text(item.rawValue)
-                                        .font(.system(size: 11.5, weight: isSelected ? .bold : .semibold))
-                                        .foregroundStyle(isSelected ? item.color : .primary)
-                                    Text("• \(item.tagline)")
-                                        .font(.system(size: 10, weight: .medium))
-                                        .foregroundStyle(isSelected ? item.color.opacity(0.8) : .secondary)
-                                }
-                                Text(item.description)
-                                    .font(.system(size: 9.5))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-
-                            Spacer()
-
-                            if isSelected {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(item.color)
-                                    .transition(.scale.combined(with: .opacity))
-                            }
+                            Text(item.description)
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
                         }
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(isSelected ? item.color.opacity(0.09) : (isHovered ? Color.primary.opacity(0.035) : Color.clear))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .stroke(isSelected ? item.color.opacity(0.35) : Color.clear, lineWidth: 1)
-                        )
+
+                        Spacer()
+
+                        if isSelected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(item.color)
+                                .transition(.scale.combined(with: .opacity))
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .onHover { h in
-                        hoveredLevel = h ? item : nil
-                    }
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(isSelected ? item.color.opacity(0.09) : (isHovered ? Color.primary.opacity(0.035) : Color.clear))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .stroke(isSelected ? item.color.opacity(0.35) : Color.clear, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .onHover { h in
+                    hoveredLevel = h ? item : nil
                 }
             }
         }
-        .padding(13)
-        .frame(width: 310)
+        .padding(7)
+        .frame(width: 285)
     }
 }
 
