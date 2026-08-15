@@ -2410,8 +2410,8 @@ struct ContentView: View {
         @Bindable var bindableManager = manager
         VStack(spacing: 0) {
             // Right Sidebar Header
-            HStack(spacing: 10) {
-                Picker("Sidebar Panel", selection: Binding(
+            HStack(spacing: 8) {
+                Picker("", selection: Binding(
                     get: { rightSidebarTab },
                     set: { newTab in
                         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
@@ -2429,6 +2429,7 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
 
                 Button {
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
@@ -2438,15 +2439,15 @@ struct ContentView: View {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.secondary)
-                        .frame(width: 20, height: 20)
+                        .frame(width: 22, height: 22)
                         .background(Color.primary.opacity(0.06), in: Circle())
                 }
                 .buttonStyle(.plain)
                 .help("Close Sidebar")
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 10)
-            .padding(.bottom, 8)
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
 
             Divider()
                 .opacity(0.2)
