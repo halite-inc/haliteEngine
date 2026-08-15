@@ -5094,81 +5094,70 @@ struct TerminalThoughtView: View {
     let isComplete: Bool
     let didSucceed: Bool?
     
-    @State private var isExpanded: Bool = true
     @State private var copied: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isExpanded.toggle()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                if !isComplete {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(didSucceed == false ? .red : .green)
                 }
-            }) {
-                HStack(spacing: 6) {
-                    if !isComplete {
-                        ProgressView()
-                            .controlSize(.mini)
-                    } else {
-                        Image(systemName: "terminal.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(didSucceed == false ? .red : .green)
-                    }
-                    
-                    Text(isExpanded ? "v" : ">")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    
-                    Text("terminal action")
-                        .font(.system(size: 11.5, weight: .regular, design: .monospaced))
-                    
-                    if !isComplete {
-                        Text("Running…")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.teal)
-                            .symbolEffect(.pulse, isActive: true)
-                    } else {
-                        Text(didSucceed == false ? "Failed" : "Completed")
-                            .font(.system(size: 10, weight: .regular, design: .monospaced))
-                            .foregroundStyle(didSucceed == false ? Color.red.opacity(0.85) : Color.green.opacity(0.8))
-                    }
+                
+                Text("terminal action")
+                    .font(.system(size: 11.5, weight: .regular, design: .monospaced))
+                
+                if !isComplete {
+                    Text("Running…")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.teal)
+                        .symbolEffect(.pulse, isActive: true)
+                } else {
+                    Text(didSucceed == false ? "Failed" : "Completed")
+                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .foregroundStyle(didSucceed == false ? Color.red.opacity(0.85) : Color.green.opacity(0.8))
                 }
-                .foregroundStyle(!isComplete ? .primary : .secondary)
+
+                Spacer()
+
+                if !commandText.isEmpty {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(commandText, forType: .string)
+                        withAnimation { copied = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            withAnimation { copied = false }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            Text(copied ? "Copied" : "Copy Command")
+                        }
+                        .font(.system(size: 10, weight: .medium))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                }
             }
-            .buttonStyle(.plain)
-            
-            if isExpanded {
-                HStack(alignment: .top) {
+            .foregroundStyle(!isComplete ? .primary : .secondary)
+
+            if !commandText.isEmpty {
+                HStack(alignment: .top, spacing: 6) {
                     Rectangle()
                         .fill(!isComplete ? Color.teal.opacity(0.6) : (didSucceed == false ? Color.red.opacity(0.4) : Color.green.opacity(0.4)))
                         .frame(width: 2)
                     
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(commandText)
-                            .font(.system(size: 11.5, weight: .regular, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .lineSpacing(2)
-                            .textSelection(.enabled)
-                        
-                        Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(commandText, forType: .string)
-                            withAnimation { copied = true }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                                withAnimation { copied = false }
-                            }
-                        } label: {
-                            HStack(spacing: 3) {
-                                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                Text(copied ? "Copied" : "Copy Command")
-                            }
-                            .font(.system(size: 10, weight: .medium))
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.top, 4)
-                    }
-                    .padding(.leading, 4)
+                    Text(commandText)
+                        .font(.system(size: 11.5, weight: .regular, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
                 }
-                .padding(.top, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 2)
             }
         }
         .padding(8)
