@@ -3352,94 +3352,94 @@ struct ContentView: View {
         
         HStack(spacing: 0) {
             // Modern Sidebar Navigation
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 10) {
                 // Header
-                HStack(spacing: 14) {
+                HStack(spacing: 10) {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .fill(LinearGradient(colors: [accentColorValue, accentColorValue.opacity(0.7)], startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .frame(width: 38, height: 38)
+                            .frame(width: 28, height: 28)
                         Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.white)
                     }
                     
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 1) {
                         Text("Settings")
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
-                        Text("Preferences & Configuration")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                        Text("Preferences & Engine")
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
                 
                 Divider()
                     .opacity(0.5)
                 
                 // Navigation Items List
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("PREFERENCES")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.secondary.opacity(0.8))
-                        .padding(.horizontal, 14)
-                        .padding(.top, 4)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 2)
                     
                     ForEach([SettingsTab.general, SettingsTab.tools]) { tab in
                         settingsTabButton(for: tab)
                     }
                     
                     Text("AI ENGINE & APIS")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.secondary.opacity(0.8))
-                        .padding(.horizontal, 14)
-                        .padding(.top, 10)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 6)
                     
                     ForEach([SettingsTab.apiKeys, SettingsTab.models]) { tab in
                         settingsTabButton(for: tab)
                     }
                     
                     Text("PROMPTS & RULES")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(.secondary.opacity(0.8))
-                        .padding(.horizontal, 14)
-                        .padding(.top, 10)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 6)
                     
                     ForEach([SettingsTab.prePrompts]) { tab in
                         settingsTabButton(for: tab)
                     }
                 }
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 8)
                 
                 Spacer()
                 
                 // Active Model Footer Card
                 if let activeThread = manager.activeThread {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         Circle()
                             .fill(Color.green)
-                            .frame(width: 7, height: 7)
+                            .frame(width: 6, height: 6)
                         
                         VStack(alignment: .leading, spacing: 1) {
                             Text("ACTIVE MODEL")
-                                .font(.system(size: 10, weight: .bold))
+                                .font(.system(size: 9, weight: .bold))
                                 .foregroundStyle(.secondary)
                             Text(selectedModelDisplayName(for: activeThread))
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.system(size: 12, weight: .semibold))
                                 .lineLimit(1)
                         }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.secondary.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 18)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 12)
                 }
             }
-            .frame(width: 205)
+            .frame(width: 185)
             .background(Color.secondary.opacity(0.055))
             
             Divider()
@@ -3448,11 +3448,11 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 // Top Bar Header
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(selectedSettingsTab.rawValue)
-                            .font(.system(size: 19, weight: .bold, design: .rounded))
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
                         Text(settingsTabSubtitle(for: selectedSettingsTab))
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 11.5, weight: .regular))
                             .foregroundStyle(.secondary)
                     }
                     
@@ -3462,33 +3462,30 @@ struct ContentView: View {
                         showAppSettingsModal = false
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 24, weight: .semibold))
+                            .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(.secondary.opacity(0.7))
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 15)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 10)
                 .background(Color.secondary.opacity(0.02))
                 
                 Divider()
                 
                 // Content View for active tab
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 12) {
                         switch selectedSettingsTab {
                         case .general:
                             // Appearance Section Card
-                            VStack(alignment: .leading, spacing: 14) {
-                                HStack {
-                                    Label("Appearance & Theme", systemImage: "paintbrush.fill")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundStyle(accentColorValue)
-                                    Spacer()
-                                }
+                            VStack(alignment: .leading, spacing: 10) {
+                                Label("Appearance & Theme", systemImage: "paintbrush.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(accentColorValue)
                                 
                                 // Sleek Segmented Pill Slider / Switcher
-                                HStack(spacing: 4) {
+                                HStack(spacing: 3) {
                                     ForEach(["system", "light", "dark"], id: \.self) { mode in
                                         let isSelected = appAppearance == mode
                                         Button {
@@ -3496,41 +3493,41 @@ struct ContentView: View {
                                                 appAppearance = mode
                                             }
                                         } label: {
-                                            HStack(spacing: 6) {
+                                            HStack(spacing: 5) {
                                                 Image(systemName: mode == "system" ? "laptopcomputer" : (mode == "light" ? "sun.max.fill" : "moon.stars.fill"))
-                                                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                                                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
                                                 Text(mode.capitalized)
-                                                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
+                                                    .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium))
                                             }
                                             .foregroundStyle(isSelected ? .white : .secondary)
                                             .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 7)
+                                            .padding(.vertical, 5)
                                             .background(
-                                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                                RoundedRectangle(cornerRadius: 7, style: .continuous)
                                                     .fill(isSelected ? accentColorValue : Color.clear)
-                                                    .shadow(color: isSelected ? accentColorValue.opacity(0.3) : .clear, radius: 4, x: 0, y: 1.5)
+                                                    .shadow(color: isSelected ? accentColorValue.opacity(0.3) : .clear, radius: 3, x: 0, y: 1)
                                             )
                                         }
                                         .buttonStyle(.plain)
                                     }
                                 }
-                                .padding(3)
-                                .background(Color.secondary.opacity(0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .padding(2.5)
+                                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                             }
-                            .padding(18)
+                            .padding(14)
                             .background(Color.primary.opacity(0.03))
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
                             
                             // Accent Color Section Card
-                            VStack(alignment: .leading, spacing: 18) {
+                            VStack(alignment: .leading, spacing: 10) {
                                 Label("App Accent & Color Palette", systemImage: "swatchpalette.fill")
-                                    .font(.headline)
+                                    .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(accentColorValue)
                                 
-                                HStack(spacing: 12) {
+                                HStack(spacing: 8) {
                                     ScrollView(.horizontal, showsIndicators: false) {
-                                        HStack(spacing: 8) {
+                                        HStack(spacing: 6) {
                                             ForEach(["blue", "purple", "pink", "orange", "green", "red", "custom"], id: \.self) { color in
                                                 Button {
                                                     withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
@@ -3538,14 +3535,14 @@ struct ContentView: View {
                                                     }
                                                 } label: {
                                                     Text(color.capitalized)
-                                                        .font(.system(size: 14, weight: .semibold))
+                                                        .font(.system(size: 11.5, weight: .medium))
                                                         .fontWeight(userBubbleAccentColor == color ? .bold : .medium)
                                                         .foregroundStyle(userBubbleAccentColor == color ? .white : .primary)
-                                                        .padding(.vertical, 9)
-                                                        .padding(.horizontal, 16)
+                                                        .padding(.vertical, 4.5)
+                                                        .padding(.horizontal, 11)
                                                         .background(
                                                             Capsule()
-                                                                .fill(userBubbleAccentColor == color ? accentColorValue : Color.secondary.opacity(0.1))
+                                                                .fill(userBubbleAccentColor == color ? accentColorValue : Color.secondary.opacity(0.09))
                                                         )
                                                 }
                                                 .buttonStyle(.plain)
@@ -3563,22 +3560,22 @@ struct ContentView: View {
                                     .labelsHidden()
                                 }
                             }
-                            .padding(24)
+                            .padding(14)
                             .background(Color.primary.opacity(0.03))
-                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color.secondary.opacity(0.14), lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
 
                             // Wallpaper belongs to the main Appearance settings,
                             // not to a per-chat sidebar configuration panel.
-                            VStack(alignment: .leading, spacing: 16) {
+                            VStack(alignment: .leading, spacing: 10) {
                                 Label("Chat Wallpaper Theme & Design", systemImage: "photo.on.rectangle.angled")
-                                    .font(.headline)
+                                    .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(accentColorValue)
                                 Text("Choose the background pattern used throughout your chats.")
-                                    .font(.system(size: 13))
+                                    .font(.system(size: 11.5))
                                     .foregroundStyle(.secondary)
 
-                                HStack(spacing: 8) {
+                                HStack(spacing: 6) {
                                     wallpaperPresetCard(id: "doodles", title: "WhatsApp", icon: "bubble.left.and.bubble.right.fill")
                                     wallpaperPresetCard(id: "dots", title: "Dots", icon: "circle.grid.3x3.fill")
                                     wallpaperPresetCard(id: "grid", title: "Grid", icon: "grid")
@@ -3592,26 +3589,29 @@ struct ContentView: View {
                                         panel.allowedContentTypes = [.image]
                                         panel.allowsMultipleSelection = false
                                         if panel.runModal() == .OK, let url = panel.url {
-                                            chatCustomWallpaperPath = url.path
+                                             chatCustomWallpaperPath = url.path
                                             chatWallpaperPattern = "custom"
                                         }
                                     }
                                     .buttonStyle(.bordered)
+                                    .controlSize(.small)
                                     if chatWallpaperPattern == "custom" {
                                         Button("Remove") { chatCustomWallpaperPath = ""; chatWallpaperPattern = "none" }
                                             .buttonStyle(.bordered)
+                                            .controlSize(.small)
                                     }
                                     Spacer()
                                 }
 
-                                HStack {
+                                HStack(spacing: 12) {
                                     Picker("Rotation", selection: $chatWallpaperRotation) {
                                         Text("0°").tag(0.0)
                                         Text("45°").tag(45.0)
                                         Text("90°").tag(90.0)
                                         Text("180°").tag(180.0)
                                     }
-                                    .frame(maxWidth: 150)
+                                    .font(.system(size: 11.5))
+                                    .frame(maxWidth: 130)
 
                                     Picker("Color", selection: $chatWallpaperColor) {
                                         Text("Auto").tag("auto")
@@ -3622,19 +3622,20 @@ struct ContentView: View {
                                         Text("Green").tag("green")
                                         Text("Mono").tag("monochrome")
                                     }
-                                    .frame(maxWidth: 150)
+                                    .font(.system(size: 11.5))
+                                    .frame(maxWidth: 130)
                                 }
 
                             }
-                            .padding(24)
+                            .padding(14)
                             .background(Color.primary.opacity(0.03))
-                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color.secondary.opacity(0.14), lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
                             
                             // Chat Layout & Bubble Rendering Options
-                            VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 10) {
                                 Label("Chat Display & Bubble Layout", systemImage: "sparkles.tv.fill")
-                                    .font(.headline)
+                                    .font(.system(size: 13, weight: .semibold))
                                     .foregroundStyle(accentColorValue)
                                 
                                 Toggle("Glassmorphism & Dynamic Translucent Backgrounds", isOn: Binding(
@@ -4308,20 +4309,20 @@ struct ContentView: View {
                 selectedSettingsTab = tab
             }
         } label: {
-            HStack(spacing: 14) {
+            HStack(spacing: 10) {
                 SettingsIconView(systemName: tab.iconName, bgColor: tab.iconBgColor)
                 
                 Text(tab.rawValue)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .fontWeight(selectedSettingsTab == tab ? .semibold : .regular)
                     .foregroundStyle(selectedSettingsTab == tab ? .primary : .secondary)
                 
                 Spacer()
             }
-            .padding(.vertical, 10)
-            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
             .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(selectedSettingsTab == tab ? accentColorValue.opacity(0.16) : Color.clear)
             )
         }
@@ -4406,26 +4407,26 @@ struct ContentView: View {
                 chatWallpaperPattern = id
             }
         } label: {
-            VStack(spacing: 10) {
+            VStack(spacing: 6) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(Color.primary.opacity(0.06))
-                        .frame(height: 82)
+                        .frame(height: 52)
                     
                     ChatWallpaperBackgroundView(pattern: id)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     
                     Image(systemName: icon)
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(isSelected ? accentColorValue : Color.secondary)
                 }
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(isSelected ? accentColorValue : Color.secondary.opacity(0.2), lineWidth: isSelected ? 2 : 1)
                 )
                 
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 11, weight: .medium))
                     .fontWeight(isSelected ? .bold : .medium)
                     .foregroundStyle(isSelected ? Color.primary : Color.secondary)
             }
@@ -7088,14 +7089,14 @@ struct SettingsIconView: View {
     
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(bgColor)
-                .frame(width: 34, height: 34)
+                .frame(width: 24, height: 24)
             Image(systemName: systemName)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white)
         }
-        .frame(width: 34, height: 34)
+        .frame(width: 24, height: 24)
     }
 }
 
