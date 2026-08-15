@@ -1565,10 +1565,6 @@ struct ContentView: View {
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
-                let pickerWidth: CGFloat = thread.showSystemMessages
-                    ? (rightSidebarSources.isEmpty ? 200 : 250)
-                    : (rightSidebarSources.isEmpty ? 130 : 160)
-
                 // Share Menu Button (anchored to the right of the chat area, outside right sidebar)
                 Menu {
                     Button {
@@ -1588,37 +1584,55 @@ struct ContentView: View {
                 .help("Share Transcript")
                 .disabled(thread.messages.isEmpty)
 
-                // Toggle Right Sidebar Button (placed to the left of right sidebar panel)
-                Button {
-                    withAnimation {
-                        showRightSidebar.toggle()
-                    }
-                } label: {
-                    Label("Toggle Sidebar", systemImage: "sidebar.right")
-                        .foregroundStyle(showRightSidebar ? .blue : .primary)
-                }
-                .help("Toggle Sidebar")
-
                 if showRightSidebar {
-                    Picker("Sidebar Panel", selection: Binding(
-                        get: { rightSidebarTab },
-                        set: { newTab in
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                                rightSidebarTab = newTab
+                    let pickerWidth: CGFloat = thread.showSystemMessages
+                        ? (rightSidebarSources.isEmpty ? 160 : 200)
+                        : (rightSidebarSources.isEmpty ? 110 : 140)
+
+                    HStack(spacing: 8) {
+                        Button {
+                            withAnimation {
+                                showRightSidebar.toggle()
+                            }
+                        } label: {
+                            Label("Toggle Sidebar", systemImage: "sidebar.right")
+                                .foregroundStyle(.blue)
+                        }
+                        .help("Toggle Sidebar")
+
+                        Spacer()
+
+                        Picker("Sidebar Panel", selection: Binding(
+                            get: { rightSidebarTab },
+                            set: { newTab in
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                    rightSidebarTab = newTab
+                                }
+                            }
+                        )) {
+                            Image(systemName: "slider.horizontal.3").tag(RightSidebarTab.configure).help("Configure Assistant Settings")
+                            if !rightSidebarSources.isEmpty {
+                                Image(systemName: "globe").tag(RightSidebarTab.sources).help("Web Sources")
+                            }
+                            if thread.showSystemMessages {
+                                Image(systemName: "text.line.first.and.arrowtriangle.forward").tag(RightSidebarTab.prePrompts).help("Pre Prompts Manager")
+                                Image(systemName: "network").tag(RightSidebarTab.memoryGraph).help("Advanced Memory Graph")
                             }
                         }
-                    )) {
-                        Image(systemName: "slider.horizontal.3").tag(RightSidebarTab.configure).help("Configure Assistant Settings")
-                        if !rightSidebarSources.isEmpty {
-                            Image(systemName: "globe").tag(RightSidebarTab.sources).help("Web Sources")
-                        }
-                        if thread.showSystemMessages {
-                            Image(systemName: "text.line.first.and.arrowtriangle.forward").tag(RightSidebarTab.prePrompts).help("Pre Prompts Manager")
-                            Image(systemName: "network").tag(RightSidebarTab.memoryGraph).help("Advanced Memory Graph")
-                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: pickerWidth)
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: pickerWidth)
+                    .frame(width: max(200, rightSidebarWidth - 28))
+                } else {
+                    Button {
+                        withAnimation {
+                            showRightSidebar.toggle()
+                        }
+                    } label: {
+                        Label("Toggle Sidebar", systemImage: "sidebar.right")
+                            .foregroundStyle(.primary)
+                    }
+                    .help("Toggle Sidebar")
                 }
             }
         }
