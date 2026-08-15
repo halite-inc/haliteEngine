@@ -3479,42 +3479,48 @@ struct ContentView: View {
                         switch selectedSettingsTab {
                         case .general:
                             // Appearance Section Card
-                            VStack(alignment: .leading, spacing: 20) {
-                                Label("Appearance & Theme", systemImage: "paintbrush.fill")
-                                    .font(.headline)
-                                    .foregroundStyle(accentColorValue)
+                            VStack(alignment: .leading, spacing: 14) {
+                                HStack {
+                                    Label("Appearance & Theme", systemImage: "paintbrush.fill")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(accentColorValue)
+                                    Spacer()
+                                }
                                 
-                                HStack(spacing: 16) {
+                                // Sleek Segmented Pill Slider / Switcher
+                                HStack(spacing: 4) {
                                     ForEach(["system", "light", "dark"], id: \.self) { mode in
+                                        let isSelected = appAppearance == mode
                                         Button {
-                                            withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
+                                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
                                                 appAppearance = mode
                                             }
                                         } label: {
-                                            VStack(spacing: 10) {
+                                            HStack(spacing: 6) {
                                                 Image(systemName: mode == "system" ? "laptopcomputer" : (mode == "light" ? "sun.max.fill" : "moon.stars.fill"))
-                                                    .font(.system(size: 26, weight: .medium))
-                                                    .foregroundStyle(appAppearance == mode ? .white : .primary)
+                                                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
                                                 Text(mode.capitalized)
-                                                    .font(.system(size: 15, weight: .semibold))
-                                                    .fontWeight(appAppearance == mode ? .bold : .regular)
-                                                    .foregroundStyle(appAppearance == mode ? .white : .primary)
+                                                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
                                             }
-                                            .padding(.vertical, 20)
+                                            .foregroundStyle(isSelected ? .white : .secondary)
                                             .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 7)
                                             .background(
-                                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                                    .fill(appAppearance == mode ? accentColorValue : Color.secondary.opacity(0.08))
+                                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                                    .fill(isSelected ? accentColorValue : Color.clear)
+                                                    .shadow(color: isSelected ? accentColorValue.opacity(0.3) : .clear, radius: 4, x: 0, y: 1.5)
                                             )
                                         }
                                         .buttonStyle(.plain)
                                     }
                                 }
+                                .padding(3)
+                                .background(Color.secondary.opacity(0.09), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
-                            .padding(24)
+                            .padding(18)
                             .background(Color.primary.opacity(0.03))
-                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color.secondary.opacity(0.14), lineWidth: 1))
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
                             
                             // Accent Color Section Card
                             VStack(alignment: .leading, spacing: 18) {
