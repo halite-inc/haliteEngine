@@ -46,6 +46,7 @@ public enum UpdateCheckState: Equatable {
     case updateAvailable(AppReleaseInfo)
     case downloading(progress: Double)
     case readyToInstall(fileURL: URL, release: AppReleaseInfo)
+    case installing
     case error(String)
 
     public var isChecking: Bool {
@@ -55,6 +56,11 @@ public enum UpdateCheckState: Equatable {
 
     public var isDownloading: Bool {
         if case .downloading = self { return true }
+        return false
+    }
+
+    public var isInstalling: Bool {
+        if case .installing = self { return true }
         return false
     }
 }
@@ -216,9 +222,135 @@ public final class UpdateManager: ObservableObject {
     }
 
     public func installUpdate(fileURL: URL) {
-        // Reveal downloaded file in Finder and open/mount it
-        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
-        NSWorkspace.shared.open(fileURL)
+        self.state = .installing
+
+        let currentAppBundleURL = Bundle.main.bundleURL
+        let currentAppPath = currentAppBundleURL.path
+        let pid = ProcessInfo.processInfo.processIdentifier
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            do {
+                let stagingDir = FileManager.default.temporaryDirectory.appendingPathComponent("HaliteUpdateStaging_\(UUID().uuidString)")
+                try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+
+                let ext = fileURL.pathExtension.lowercased()
+                var extractedAppPath: String? = nil
+
+                if ext == "zip" {
+                    // Extract zip headlessly using ditto
+                    let unzipProcess = Process()
+                    unzipProcess.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+                    unzipProcess.arguments = ["-xk", fileURL.path, stagingDir.path]
+                    try unzipProcess.run()
+                    unzipProcess.waitUntilExit()
+
+                    if unzipProcess.terminationStatus == 0 {
+                        let contents = try FileManager.default.contentsOfDirectory(at: stagingDir, includingPropertiesForKeys: nil)
+                        if let appURL = contents.first(where: { $0.pathExtension == "app" }) {
+                            extractedAppPath = appURL.path
+                        }
+                    }
+                } else if ext == "dmg" {
+                    // Mount DMG headlessly
+                    let mountPoint = stagingDir.appendingPathComponent("mount")
+                    try FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
+
+                    let attachProcess = Process()
+                    attachProcess.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+                    attachProcess.arguments = ["attach", fileURL.path, "-mountpoint", mountPoint.path, "-nobrowse", "-quiet", "-noautoopen"]
+                    try attachProcess.run()
+                    attachProcess.waitUntilExit()
+
+                    if attachProcess.terminationStatus == 0 {
+                        let contents = try? FileManager.default.contentsOfDirectory(at: mountPoint, includingPropertiesForKeys: nil)
+                        if let appURL = contents?.first(where: { $0.pathExtension == "app" }) {
+                            let localAppCopy = stagingDir.appendingPathComponent(appURL.lastPathComponent)
+                            let copyProcess = Process()
+                            copyProcess.executableURL = URL(fileURLWithPath: "/bin/cp")
+                            copyProcess.arguments = ["-R", appURL.path, localAppCopy.path]
+                            try copyProcess.run()
+                            copyProcess.waitUntilExit()
+                            if copyProcess.terminationStatus == 0 {
+                                extractedAppPath = localAppCopy.path
+                            }
+                        }
+
+                        // Unmount
+                        let detachProcess = Process()
+                        detachProcess.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+                        detachProcess.arguments = ["detach", mountPoint.path, "-quiet", "-force"]
+                        try? detachProcess.run()
+                        detachProcess.waitUntilExit()
+                    }
+                }
+
+                guard let newAppPath = extractedAppPath else {
+                    Task { @MainActor in
+                        // Fallback: reveal in Finder if automated extraction was not possible
+                        self?.state = .readyToInstall(fileURL: fileURL, release: AppReleaseInfo(tagName: "", version: "", title: "", changelog: ""))
+                        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+                        NSWorkspace.shared.open(fileURL)
+                    }
+                    return
+                }
+
+                // Create helper updater script
+                let updaterScriptPath = "/tmp/halite_in_place_updater.sh"
+                let scriptContent = """
+                #!/bin/bash
+                set -e
+                
+                # Wait for running app PID \(pid) to exit
+                while kill -0 \(pid) 2>/dev/null; do
+                    sleep 0.2
+                done
+                
+                sleep 0.4
+                
+                # Replace the target application bundle
+                if [ -d "\(currentAppPath)" ]; then
+                    rm -rf "\(currentAppPath)"
+                fi
+                
+                cp -R "\(newAppPath)" "\(currentAppPath)"
+                
+                # Remove quarantine attribute
+                xattr -dr com.apple.quarantine "\(currentAppPath)" 2>/dev/null || true
+                
+                # Relaunch the new application
+                open "\(currentAppPath)"
+                
+                # Cleanup staging
+                rm -rf "\(stagingDir.path)"
+                rm -f "\(updaterScriptPath)"
+                exit 0
+                """
+
+                try scriptContent.write(toFile: updaterScriptPath, atomically: true, encoding: .utf8)
+                
+                // Make script executable
+                let chmodProcess = Process()
+                chmodProcess.executableURL = URL(fileURLWithPath: "/bin/chmod")
+                chmodProcess.arguments = ["+x", updaterScriptPath]
+                try chmodProcess.run()
+                chmodProcess.waitUntilExit()
+
+                // Launch updater script in background detached
+                let launcherProcess = Process()
+                launcherProcess.executableURL = URL(fileURLWithPath: "/bin/bash")
+                launcherProcess.arguments = ["-c", "nohup /bin/bash \(updaterScriptPath) >/dev/null 2>&1 &"]
+                try launcherProcess.run()
+
+                // Gracefully quit the running app
+                DispatchQueue.main.async {
+                    NSApplication.shared.terminate(nil)
+                }
+            } catch {
+                Task { @MainActor in
+                    self?.state = .error("Failed to install update: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     public func openReleaseWebPage(release: AppReleaseInfo) {
@@ -264,24 +396,24 @@ public final class UpdateManager: ObservableObject {
             pubDate = formatter.date(from: pubDateStr)
         }
 
-        // Find downloadable asset (.dmg preferred, fallback to .zip)
+        // Find downloadable asset (.zip preferred for fast in-place update, fallback to .dmg)
         var downloadURL: URL? = nil
         if let assets = json["assets"] as? [[String: Any]] {
-            // First priority: DMG
+            // First priority: ZIP (Halite-macos.zip / appleint-macos.zip)
             for asset in assets {
                 if let assetName = asset["name"] as? String,
-                   assetName.hasSuffix(".dmg"),
+                   assetName.hasSuffix(".zip"),
                    let downloadStr = asset["browser_download_url"] as? String,
                    let assetURL = URL(string: downloadStr) {
                     downloadURL = assetURL
                     break
                 }
             }
-            // Fallback: ZIP
+            // Second priority: DMG
             if downloadURL == nil {
                 for asset in assets {
                     if let assetName = asset["name"] as? String,
-                       assetName.hasSuffix(".zip"),
+                       assetName.hasSuffix(".dmg"),
                        let downloadStr = asset["browser_download_url"] as? String,
                        let assetURL = URL(string: downloadStr) {
                         downloadURL = assetURL

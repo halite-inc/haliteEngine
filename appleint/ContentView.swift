@@ -4121,19 +4121,24 @@ struct ContentView: View {
             case .readyToInstall(let fileURL, let release):
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Image(systemName: "checkmark.circle.fill")
+                        Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
                             .font(.title2)
                             .foregroundStyle(.green)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Update v\(release.version) Ready")
                                 .font(.headline)
-                            Text("Downloaded to \(fileURL.lastPathComponent)")
+                            Text("Click to install and relaunch automatically.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("Install Update") {
+                        Button {
                             updateManager.installUpdate(fileURL: fileURL)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "sparkles")
+                                Text("Install & Restart")
+                            }
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.green)
@@ -4141,6 +4146,21 @@ struct ContentView: View {
                 }
                 .padding(20)
                 .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            case .installing:
+                HStack(spacing: 12) {
+                    ProgressView().controlSize(.regular)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Installing Update…")
+                            .font(.headline)
+                        Text("Replacing app bundle and relaunching Halite automatically.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(20)
+                .background(Color.cyan.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
             case .error(let errorMsg):
                 HStack(spacing: 12) {
