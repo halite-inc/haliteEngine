@@ -159,14 +159,25 @@ public final class ChatManager {
     private var fileReadCache: [String: (modifiedAt: Date, content: String)] = [:]
     
     public struct TerminalLogEntry: Identifiable {
-        public let id = UUID()
+        public let id: UUID
         public let timestamp: Date
         public let command: String
         public let directory: String
-        public let output: String
-        public let exitCode: Int32
-        public let isError: Bool
+        public var output: String
+        public var exitCode: Int32
+        public var isError: Bool
         public let action: String // "execute_command", "list", "create_file", etc.
+
+        public init(id: UUID = UUID(), timestamp: Date = Date(), command: String, directory: String, output: String, exitCode: Int32, isError: Bool, action: String) {
+            self.id = id
+            self.timestamp = timestamp
+            self.command = command
+            self.directory = directory
+            self.output = output
+            self.exitCode = exitCode
+            self.isError = isError
+            self.action = action
+        }
     }
 
     private var terminalAuditURL: URL {
@@ -179,6 +190,51 @@ public final class ChatManager {
         if terminalLogs.count > 200 {
             terminalLogs.removeFirst(terminalLogs.count - 200)
         }
+        saveTerminalAudit(entry: entry)
+    }
+
+    public func startLiveTerminalLog(command: String, directory: String, action: String = "execute_command") -> UUID {
+        let entry = TerminalLogEntry(
+            id: UUID(),
+            timestamp: Date(),
+            command: command,
+            directory: directory,
+            output: "Executing command...",
+            exitCode: 0,
+            isError: false,
+            action: action
+        )
+        terminalLogs.append(entry)
+        if terminalLogs.count > 200 {
+            terminalLogs.removeFirst(terminalLogs.count - 200)
+        }
+        return entry.id
+    }
+
+    public func updateLiveTerminalLog(id: UUID, chunk: String) {
+        guard let index = terminalLogs.firstIndex(where: { $0.id == id }) else { return }
+        var currentOutput = terminalLogs[index].output
+        if currentOutput == "Executing command..." {
+            currentOutput = chunk
+        } else {
+            currentOutput += chunk
+        }
+        // Keep output bounded to prevent unbounded memory growth while streaming large outputs
+        if currentOutput.count > 40_000 {
+            currentOutput = String(currentOutput.suffix(40_000))
+        }
+        terminalLogs[index].output = currentOutput
+    }
+
+    public func finalizeLiveTerminalLog(id: UUID, finalOutput: String, exitCode: Int32, finalDirectory: String) {
+        guard let index = terminalLogs.firstIndex(where: { $0.id == id }) else { return }
+        terminalLogs[index].output = finalOutput
+        terminalLogs[index].exitCode = exitCode
+        terminalLogs[index].isError = exitCode != 0
+        saveTerminalAudit(entry: terminalLogs[index])
+    }
+
+    private func saveTerminalAudit(entry: TerminalLogEntry) {
         let formatter = ISO8601DateFormatter()
         let record: [String: Any] = [
             "timestamp": formatter.string(from: entry.timestamp),
@@ -362,24 +418,21 @@ public final class ChatManager {
 
         let workingDirectory = terminalCurrentDirectory
         isTerminalCommandRunning = true
-
-        let commandTask = Task.detached {
-            Self.executeTerminalCommand(command, in: workingDirectory)
-        }
+        let liveLogId = startLiveTerminalLog(command: command, directory: workingDirectory, action: "interactive_command")
 
         Task { [weak self] in
-            let result = await commandTask.value
+            let result = await Task.detached {
+                Self.executeTerminalCommand(command, in: workingDirectory) { chunk in
+                    Task { @MainActor [weak self] in
+                        self?.updateLiveTerminalLog(id: liveLogId, chunk: chunk)
+                    }
+                }
+            }.value
             guard let self else { return }
             self.terminalCurrentDirectory = result.directory
-            self.appendTerminalLog(TerminalLogEntry(
-                    timestamp: Date(),
-                    command: command,
-                    directory: workingDirectory,
-                    output: result.output,
-                    exitCode: result.exitCode,
-                    isError: result.exitCode != 0,
-                    action: "interactive_command"
-            ))
+            self.finalizeLiveTerminalLog(id: liveLogId, finalOutput: result.output, exitCode: result.exitCode, finalDirectory: result.directory)
+            self.isTerminalCommandRunning = false
+
             if result.exitCode != 0 {
                 await self.repairFailedTerminalCommand(
                     command,
@@ -388,7 +441,6 @@ public final class ChatManager {
                     attempt: 1
                 )
             }
-            self.isTerminalCommandRunning = false
         }
     }
 
@@ -471,7 +523,11 @@ public final class ChatManager {
         return value
     }
 
-    nonisolated private static func executeTerminalCommand(_ command: String, in directory: String) -> (output: String, exitCode: Int32, directory: String) {
+    nonisolated private static func executeTerminalCommand(
+        _ command: String,
+        in directory: String,
+        onOutput: (@Sendable (String) -> Void)? = nil
+    ) -> (output: String, exitCode: Int32, directory: String) {
         let escapedDirectory = directory.replacingOccurrences(of: "'", with: "'\\\"'\\\"'")
         let directoryMarker = "__APPLEINT_TERMINAL_DIRECTORY__"
         let shellCommand = "cd -- '\(escapedDirectory)' 2>&1 || exit $?; \(command); command_status=$?; printf '\\n\(directoryMarker)%s\\n' \"$PWD\"; exit $command_status"
@@ -483,23 +539,45 @@ public final class ChatManager {
         process.standardOutput = pipe
         process.standardError = pipe
 
+        var env = ProcessInfo.processInfo.environment
+        env["NSUnbufferedIO"] = "YES"
+        env["PYTHONUNBUFFERED"] = "1"
+        env["HOMEBREW_NO_AUTO_UPDATE"] = "1"
+        env["NONINTERACTIVE"] = "1"
+        env["TERM"] = "xterm-256color"
+        process.environment = env
+
+        let outputLock = NSLock()
+        var accumulatedData = Data()
+
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            outputLock.lock()
+            accumulatedData.append(chunk)
+            outputLock.unlock()
+            if let str = String(data: chunk, encoding: .utf8), !str.isEmpty {
+                onOutput?(str)
+            }
+        }
+
         do {
             try process.run()
+            // 10 minute timeout for large downloads and installations
             let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 60, execute: timeout)
-            // Drain the pipe while the child runs. Waiting first can deadlock
-            // when a verbose command fills the pipe buffer.
-            let outputGroup = DispatchGroup()
-            var outputData = Data()
-            outputGroup.enter()
-            DispatchQueue.global(qos: .utility).async {
-                outputData = pipe.fileHandleForReading.readDataToEndOfFile()
-                outputGroup.leave()
-            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 600, execute: timeout)
+
             process.waitUntilExit()
             timeout.cancel()
-            outputGroup.wait()
-            let rawOutput = String(data: outputData, encoding: .utf8) ?? ""
+            pipe.fileHandleForReading.readabilityHandler = nil
+
+            let remaining = pipe.fileHandleForReading.readDataToEndOfFile()
+            outputLock.lock()
+            accumulatedData.append(remaining)
+            let totalData = accumulatedData
+            outputLock.unlock()
+
+            let rawOutput = String(data: totalData, encoding: .utf8) ?? ""
             let markerRange = rawOutput.range(of: directoryMarker, options: .backwards)
             let finalDirectory: String
             let output: String
@@ -515,6 +593,7 @@ public final class ChatManager {
 
             return (output.isEmpty ? "(No output)" : output, process.terminationStatus, finalDirectory)
         } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
             return ("Error starting zsh: \(error.localizedDescription)", 1, directory)
         }
     }
@@ -5203,7 +5282,18 @@ public final class ChatManager {
             case .requiresConfirmation(let reason):
                 statusMessage = "Error: Confirmation required. \(reason)"
             case .allow:
-                let execution = await Task.detached { Self.executeTerminalCommand(cmdToRun, in: path) }.value
+                isTerminalCommandRunning = true
+                let liveLogId = startLiveTerminalLog(command: cmdToRun, directory: path, action: "execute_command")
+                let execution = await Task.detached {
+                    Self.executeTerminalCommand(cmdToRun, in: path) { chunk in
+                        Task { @MainActor [weak self] in
+                            self?.updateLiveTerminalLog(id: liveLogId, chunk: chunk)
+                        }
+                    }
+                }.value
+                finalizeLiveTerminalLog(id: liveLogId, finalOutput: execution.output, exitCode: execution.exitCode, finalDirectory: execution.directory)
+                isTerminalCommandRunning = false
+                terminalCurrentDirectory = execution.directory
                 let output = boundedToolOutput(execution.output)
                 statusMessage = "Terminal Command Executed (Exit code \(execution.exitCode)):\n$ \(cmdToRun)\nDirectory: \(execution.directory)\n\nOutput:\n\(output)"
             }
@@ -5404,15 +5494,17 @@ public final class ChatManager {
             isErrorLog = true
         }
         
-        appendTerminalLog(TerminalLogEntry(
-            timestamp: Date(),
-            command: cmdDisplay,
-            directory: path,
-            output: statusMessage,
-            exitCode: exitCodeForLog,
-            isError: isErrorLog,
-            action: action
-        ))
+        if !["execute_command", "command", "terminal", "run_command"].contains(action) {
+            appendTerminalLog(TerminalLogEntry(
+                timestamp: Date(),
+                command: cmdDisplay,
+                directory: path,
+                output: statusMessage,
+                exitCode: exitCodeForLog,
+                isError: isErrorLog,
+                action: action
+            ))
+        }
         
         // Every command, including `open`, must return a tool response only
         // after the process exits. This keeps the model's tool loop alive so

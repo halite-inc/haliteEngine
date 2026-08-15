@@ -4805,7 +4805,7 @@ struct TerminalThoughtView: View {
     let isComplete: Bool
     let didSucceed: Bool?
     
-    @State private var isExpanded: Bool = false
+    @State private var isExpanded: Bool = true
     @State private var copied: Bool = false
 
     var body: some View {
@@ -4816,9 +4816,14 @@ struct TerminalThoughtView: View {
                 }
             }) {
                 HStack(spacing: 6) {
-                    Image(systemName: "terminal.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.green)
+                    if !isComplete {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Image(systemName: "terminal.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(didSucceed == false ? .red : .green)
+                    }
                     
                     Text(isExpanded ? "v" : ">")
                         .font(.system(size: 11, weight: .bold, design: .monospaced))
@@ -4827,8 +4832,9 @@ struct TerminalThoughtView: View {
                         .font(.system(size: 11.5, weight: .regular, design: .monospaced))
                     
                     if !isComplete {
-                        Text("...")
-                            .font(.system(size: 11.5, weight: .regular, design: .monospaced))
+                        Text("Running…")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.teal)
                             .symbolEffect(.pulse, isActive: true)
                     } else {
                         Text(didSucceed == false ? "Failed" : "Completed")
@@ -4843,7 +4849,7 @@ struct TerminalThoughtView: View {
             if isExpanded {
                 HStack(alignment: .top) {
                     Rectangle()
-                        .fill(Color.green.opacity(0.4))
+                        .fill(!isComplete ? Color.teal.opacity(0.6) : (didSucceed == false ? Color.red.opacity(0.4) : Color.green.opacity(0.4)))
                         .frame(width: 2)
                     
                     VStack(alignment: .leading, spacing: 4) {
