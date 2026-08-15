@@ -1131,44 +1131,13 @@ struct ContentView: View {
                     
                     HStack(spacing: 8) {
                         Button(action: selectImage) {
-                            Image(systemName: "photo")
-                                .font(.system(size: 16, weight: .medium))
+                            Image(systemName: "plus")
+                                .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
                         .help("Attach Image")
                         .padding(.leading, 10)
-                        
-                        Button {
-                            showEffortPopover.toggle()
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "bolt.fill")
-                                    .font(.system(size: 10.5, weight: .semibold))
-                                if !hideInputToggleText {
-                                    Text("Effort")
-                                        .font(.system(size: 10.5, weight: .semibold))
-                                }
-                            }
-                            .frame(width: hideInputToggleText ? 26 : 62)
-                            .frame(height: 25)
-                            .background(accentColorValue.opacity(0.11), in: Capsule())
-                            .overlay(Capsule().stroke(accentColorValue.opacity(0.22), lineWidth: 0.75))
-                            .foregroundStyle(accentColorValue)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Reasoning effort: \(aiEffortLevel)")
-                        .popover(isPresented: $showEffortPopover, arrowEdge: .bottom) {
-                            EffortPopoverView(
-                                level: AIEffortLevel(rawValue: aiEffortLevel) ?? .medium,
-                                accentColor: accentColorValue
-                            ) { newLevel in
-                                aiEffortLevel = newLevel.rawValue
-                                // Keep the legacy flag synchronized for older
-                                // saved prompts while providers use aiEffortLevel.
-                                enableThinking = newLevel != .low
-                            }
-                        }
 
                         if thread.provider == .lmStudio {
                             Button {
@@ -1258,6 +1227,34 @@ struct ContentView: View {
                         .animation(.easeOut(duration: 0.16), value: forceWebSearchNextMessage)
 
                         Spacer()
+                        
+                        // Effort button (borderless / no bg, positioned to left of transcribe button)
+                        Button {
+                            showEffortPopover.toggle()
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "bolt.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                if !hideInputToggleText {
+                                    Text("Effort")
+                                        .font(.system(size: 11, weight: .semibold))
+                                }
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .foregroundStyle(accentColorValue)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Reasoning effort: \(aiEffortLevel)")
+                        .popover(isPresented: $showEffortPopover, arrowEdge: .bottom) {
+                            EffortPopoverView(
+                                level: AIEffortLevel(rawValue: aiEffortLevel) ?? .medium,
+                                accentColor: accentColorValue
+                            ) { newLevel in
+                                aiEffortLevel = newLevel.rawValue
+                                enableThinking = newLevel != .low
+                            }
+                        }
                         
                         if manager.isGenerating {
                             Button(action: {
