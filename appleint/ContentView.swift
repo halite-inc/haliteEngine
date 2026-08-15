@@ -3478,280 +3478,229 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         switch selectedSettingsTab {
                         case .general:
-                            // Appearance Section Card
-                            VStack(alignment: .leading, spacing: 10) {
-                                Label("Appearance & Theme", systemImage: "paintbrush.fill")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(accentColorValue)
-                                
-                                // Sleek Segmented Pill Slider / Switcher
-                                HStack(spacing: 3) {
-                                    ForEach(["system", "light", "dark"], id: \.self) { mode in
-                                        let isSelected = appAppearance == mode
-                                        Button {
-                                            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                                                appAppearance = mode
+                            // Group 1: Appearance & Accent Palette
+                            VStack(spacing: 12) {
+                                // Theme Selector Row
+                                HStack {
+                                    Text("Theme")
+                                        .font(.system(size: 13, weight: .medium))
+                                    Spacer()
+                                    HStack(spacing: 2) {
+                                        ForEach(["system", "light", "dark"], id: \.self) { mode in
+                                            let isSelected = appAppearance == mode
+                                            Button {
+                                                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                                                    appAppearance = mode
+                                                }
+                                            } label: {
+                                                HStack(spacing: 4) {
+                                                    Image(systemName: mode == "system" ? "laptopcomputer" : (mode == "light" ? "sun.max.fill" : "moon.stars.fill"))
+                                                        .font(.system(size: 10.5))
+                                                    Text(mode.capitalized)
+                                                        .font(.system(size: 11.5, weight: isSelected ? .semibold : .regular))
+                                                }
+                                                .foregroundStyle(isSelected ? .primary : .secondary)
+                                                .padding(.horizontal, 9)
+                                                .padding(.vertical, 4)
+                                                .background(
+                                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                        .fill(isSelected ? Color.primary.opacity(0.12) : Color.clear)
+                                                )
                                             }
-                                        } label: {
-                                            HStack(spacing: 5) {
-                                                Image(systemName: mode == "system" ? "laptopcomputer" : (mode == "light" ? "sun.max.fill" : "moon.stars.fill"))
-                                                    .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                                                Text(mode.capitalized)
-                                                    .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium))
-                                            }
-                                            .foregroundStyle(isSelected ? .white : .secondary)
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 5)
-                                            .background(
-                                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                                    .fill(isSelected ? accentColorValue : Color.clear)
-                                                    .shadow(color: isSelected ? accentColorValue.opacity(0.3) : .clear, radius: 3, x: 0, y: 1)
-                                            )
+                                            .buttonStyle(.plain)
                                         }
+                                    }
+                                    .padding(2)
+                                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                                
+                                Divider().opacity(0.4)
+                                
+                                // Accent Color Swatches
+                                HStack {
+                                    Text("Accent Color")
+                                        .font(.system(size: 13, weight: .medium))
+                                    Spacer()
+                                    HStack(spacing: 8) {
+                                        ForEach(["blue", "purple", "pink", "orange", "green", "red"], id: \.self) { color in
+                                            let isSelected = userBubbleAccentColor == color
+                                            Button {
+                                                withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
+                                                    userBubbleAccentColor = color
+                                                }
+                                            } label: {
+                                                ZStack {
+                                                    Circle()
+                                                        .fill(accentSwatchColor(for: color))
+                                                        .frame(width: 17, height: 17)
+                                                    if isSelected {
+                                                        Circle()
+                                                            .stroke(Color.white, lineWidth: 2)
+                                                            .frame(width: 14, height: 14)
+                                                    }
+                                                }
+                                                .overlay(
+                                                    Circle()
+                                                        .stroke(isSelected ? accentSwatchColor(for: color) : Color.clear, lineWidth: 1.5)
+                                                        .frame(width: 23, height: 23)
+                                                )
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
+                                        
+                                        ColorPicker("", selection: Binding(
+                                            get: { Color(hex: customThemeColorHex) ?? .blue },
+                                            set: { newColor in
+                                                customThemeColorHex = newColor.toHex()
+                                                userBubbleAccentColor = "custom"
+                                            }
+                                        ))
+                                        .labelsHidden()
+                                        .scaleEffect(0.8)
+                                    }
+                                }
+                            }
+                            .padding(14)
+                            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            
+                            // Group 2: Chat Wallpaper
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
+                                    Text("Chat Wallpaper")
+                                        .font(.system(size: 13, weight: .medium))
+                                    Spacer()
+                                    if chatWallpaperPattern != "none" || !chatCustomWallpaperPath.isEmpty {
+                                        Button("Clear") {
+                                            chatWallpaperPattern = "none"
+                                            chatCustomWallpaperPath = ""
+                                        }
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(.secondary)
                                         .buttonStyle(.plain)
                                     }
                                 }
-                                .padding(2.5)
-                                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                            }
-                            .padding(14)
-                            .background(Color.primary.opacity(0.03))
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
-                            
-                            // Accent Color Section Card
-                            VStack(alignment: .leading, spacing: 10) {
-                                Label("App Accent & Color Palette", systemImage: "swatchpalette.fill")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(accentColorValue)
                                 
                                 HStack(spacing: 8) {
-                                    ScrollView(.horizontal, showsIndicators: false) {
-                                        HStack(spacing: 6) {
-                                            ForEach(["blue", "purple", "pink", "orange", "green", "red", "custom"], id: \.self) { color in
-                                                Button {
-                                                    withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
-                                                        userBubbleAccentColor = color
-                                                    }
-                                                } label: {
-                                                    Text(color.capitalized)
-                                                        .font(.system(size: 11.5, weight: .medium))
-                                                        .fontWeight(userBubbleAccentColor == color ? .bold : .medium)
-                                                        .foregroundStyle(userBubbleAccentColor == color ? .white : .primary)
-                                                        .padding(.vertical, 4.5)
-                                                        .padding(.horizontal, 11)
-                                                        .background(
-                                                            Capsule()
-                                                                .fill(userBubbleAccentColor == color ? accentColorValue : Color.secondary.opacity(0.09))
-                                                        )
-                                                }
-                                                .buttonStyle(.plain)
-                                            }
-                                        }
-                                    }
-                                    
-                                    ColorPicker("", selection: Binding(
-                                        get: { Color(hex: customThemeColorHex) ?? .blue },
-                                        set: { newColor in
-                                            customThemeColorHex = newColor.toHex()
-                                            userBubbleAccentColor = "custom"
-                                        }
-                                    ))
-                                    .labelsHidden()
-                                }
-                            }
-                            .padding(14)
-                            .background(Color.primary.opacity(0.03))
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
-
-                            // Wallpaper belongs to the main Appearance settings,
-                            // not to a per-chat sidebar configuration panel.
-                            VStack(alignment: .leading, spacing: 10) {
-                                Label("Chat Wallpaper Theme & Design", systemImage: "photo.on.rectangle.angled")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(accentColorValue)
-                                Text("Choose the background pattern used throughout your chats.")
-                                    .font(.system(size: 11.5))
-                                    .foregroundStyle(.secondary)
-
-                                HStack(spacing: 6) {
-                                    wallpaperPresetCard(id: "doodles", title: "WhatsApp", icon: "bubble.left.and.bubble.right.fill")
+                                    wallpaperPresetCard(id: "none", title: "None", icon: "square")
+                                    wallpaperPresetCard(id: "doodles", title: "Pattern", icon: "bubble.left.and.bubble.right.fill")
                                     wallpaperPresetCard(id: "dots", title: "Dots", icon: "circle.grid.3x3.fill")
                                     wallpaperPresetCard(id: "grid", title: "Grid", icon: "grid")
                                     wallpaperPresetCard(id: "stars", title: "Stars", icon: "sparkles")
-                                    wallpaperPresetCard(id: "none", title: "Clean", icon: "square")
                                 }
-
+                                
                                 HStack {
                                     Button(chatCustomWallpaperPath.isEmpty ? "Choose Custom Image…" : "Change Custom Image…") {
                                         let panel = NSOpenPanel()
                                         panel.allowedContentTypes = [.image]
                                         panel.allowsMultipleSelection = false
                                         if panel.runModal() == .OK, let url = panel.url {
-                                             chatCustomWallpaperPath = url.path
+                                            chatCustomWallpaperPath = url.path
                                             chatWallpaperPattern = "custom"
                                         }
                                     }
                                     .buttonStyle(.bordered)
                                     .controlSize(.small)
-                                    if chatWallpaperPattern == "custom" {
-                                        Button("Remove") { chatCustomWallpaperPath = ""; chatWallpaperPattern = "none" }
-                                            .buttonStyle(.bordered)
-                                            .controlSize(.small)
-                                    }
+                                    
                                     Spacer()
-                                }
-
-                                HStack(spacing: 12) {
-                                    Picker("Rotation", selection: $chatWallpaperRotation) {
-                                        Text("0°").tag(0.0)
-                                        Text("45°").tag(45.0)
-                                        Text("90°").tag(90.0)
-                                        Text("180°").tag(180.0)
+                                    
+                                    if chatWallpaperPattern != "none" {
+                                        HStack(spacing: 6) {
+                                            Picker("Color", selection: $chatWallpaperColor) {
+                                                Text("Auto").tag("auto")
+                                                Text("Blue").tag("blue")
+                                                Text("Purple").tag("purple")
+                                                Text("Pink").tag("pink")
+                                                Text("Orange").tag("orange")
+                                                Text("Green").tag("green")
+                                                Text("Mono").tag("monochrome")
+                                            }
+                                            .font(.system(size: 11))
+                                            .frame(maxWidth: 115)
+                                        }
                                     }
-                                    .font(.system(size: 11.5))
-                                    .frame(maxWidth: 130)
-
-                                    Picker("Color", selection: $chatWallpaperColor) {
-                                        Text("Auto").tag("auto")
-                                        Text("Blue").tag("blue")
-                                        Text("Purple").tag("purple")
-                                        Text("Pink").tag("pink")
-                                        Text("Orange").tag("orange")
-                                        Text("Green").tag("green")
-                                        Text("Mono").tag("monochrome")
-                                    }
-                                    .font(.system(size: 11.5))
-                                    .frame(maxWidth: 130)
                                 }
-
                             }
                             .padding(14)
-                            .background(Color.primary.opacity(0.03))
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
-                            
-                            // Chat Layout & Bubble Rendering Options
-                            VStack(alignment: .leading, spacing: 10) {
-                                Label("Chat Display & Bubble Layout", systemImage: "sparkles.tv.fill")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(accentColorValue)
-                                
-                                Toggle("Glassmorphism & Dynamic Translucent Backgrounds", isOn: Binding(
-                                    get: { !dontUseSolidBackgrounds },
-                                    set: { dontUseSolidBackgrounds = !$0 }
-                                ))
-                                .toggleStyle(.switch)
+                            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                                if !dontUseSolidBackgrounds {
-                                    HStack(spacing: 10) {
-                                        Image(systemName: "paintpalette.fill")
-                                            .foregroundStyle(glassBackgroundTintValue)
-                                        Text("Translucent background tint")
-                                            .font(.system(size: 13, weight: .medium))
-                                        Spacer()
-                                        ColorPicker(
-                                            "Translucent background tint",
-                                            selection: Binding(
-                                                get: { glassBackgroundTintValue },
-                                                set: { glassBackgroundTintHex = $0.toHex() }
-                                            ),
-                                            supportsOpacity: false
-                                        )
-                                        .labelsHidden()
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 9)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .fill(glassBackgroundTintValue.opacity(0.10))
-                                    )
-                                }
-                                
-                                Divider()
-                                
-                                Toggle("Advanced Visual Effects & Smooth Rendering", isOn: $advancedRender)
-                                    .toggleStyle(.switch)
-                                
-                                Divider()
-                                
-                                Toggle("Smooth Typing Reply Stream Animation", isOn: $smoothReply)
-                                    .toggleStyle(.switch)
-                                
-                                Divider()
-                                
-                                Toggle("Extended Composer Text Box", isOn: $extendedTextBox)
-                                    .toggleStyle(.switch)
-                                
-                                Divider()
-
-                                Toggle("Shift + Enter inserts a new line", isOn: $shiftEnterForNewLine)
-                                    .toggleStyle(.switch)
-                                
-                                Divider()
-                                
-                                Toggle("Center Design — Model Name Pill", isOn: $useCenteredModelLook)
-                                    .toggleStyle(.switch)
-                                
-                                Divider()
-                                
-                                Toggle("Vibrant Gradient Look for User Chat Bubbles", isOn: $useGradientBubbles)
-                                    .toggleStyle(.switch)
-                                
-                                Divider()
-                                
-                                Toggle("Don't show text for toggles in text box", isOn: $hideInputToggleText)
-                                    .toggleStyle(.switch)
-                                
-                            }
-                            .padding(14)
-                            .background(Color.primary.opacity(0.03))
-                            .cornerRadius(12)
-                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
-                            
-                            // Software Updates Quick Card
-                            VStack(alignment: .leading, spacing: 14) {
+                            // Group 3: Visual Effects & Translucency
+                            VStack(spacing: 8) {
                                 HStack {
-                                    Label("Software Updates", systemImage: "arrow.triangle.2.circlepath.circle.fill")
-                                        .font(.headline)
-                                        .foregroundStyle(.cyan)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text("Glassmorphism & Vibrancy")
+                                            .font(.system(size: 13, weight: .medium))
+                                        Text("Translucent blurred glass backgrounds")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                    }
                                     Spacer()
-                                    Text("v\(UpdateManager.shared.currentVersion) (Build \(UpdateManager.shared.currentBuild))")
-                                        .font(.caption.monospaced().weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Capsule().fill(Color.secondary.opacity(0.1)))
+                                    Toggle("", isOn: Binding(
+                                        get: { !dontUseSolidBackgrounds },
+                                        set: { dontUseSolidBackgrounds = !$0 }
+                                    ))
+                                    .labelsHidden()
+                                    .toggleStyle(.switch)
+                                    .controlSize(.small)
                                 }
-
-                                HStack(spacing: 12) {
-                                    Text("Keep appleint updated to access latest features, model improvements, and fixes.")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                
+                                Divider().opacity(0.4)
+                                
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text("Advanced Visual Effects")
+                                            .font(.system(size: 13, weight: .medium))
+                                        Text("Smooth transitions and particle rendering")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Toggle("", isOn: $advancedRender)
+                                        .labelsHidden()
+                                        .toggleStyle(.switch)
+                                        .controlSize(.small)
+                                }
+                            }
+                            .padding(14)
+                            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                
+                            // Group 4: Software Updates
+                            VStack(spacing: 8) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        HStack(spacing: 6) {
+                                            Text("Halite Version")
+                                                .font(.system(size: 13, weight: .medium))
+                                            Text("v\(UpdateManager.shared.currentVersion)")
+                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                                .foregroundStyle(.secondary)
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Capsule().fill(Color.secondary.opacity(0.1)))
+                                        }
+                                        Text("Check for releases and improvements")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                    }
                                     Spacer()
                                     Button {
                                         withAnimation { selectedSettingsTab = .updates }
                                         Task { await UpdateManager.shared.checkForUpdates() }
                                     } label: {
-                                        HStack(spacing: 6) {
+                                        HStack(spacing: 5) {
                                             if UpdateManager.shared.state.isChecking {
                                                 ProgressView().controlSize(.small)
                                             } else {
                                                 Image(systemName: "arrow.clockwise")
                                             }
-                                            Text("Check for Updates")
+                                            Text("Check Updates")
                                         }
-                                        .font(.subheadline.weight(.semibold))
                                     }
-                                    .buttonStyle(.borderedProminent)
-                                    .tint(.cyan)
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
                                 }
                             }
-                            .padding(24)
-                            .background(Color.primary.opacity(0.03))
-                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Color.secondary.opacity(0.14), lineWidth: 1))
+                            .padding(14)
+                            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         case .prePrompts:
                             VStack(alignment: .leading, spacing: 12) {
                                 PrePromptsView(manager: manager, threadId: manager.activeThreadId)
@@ -4399,6 +4348,19 @@ struct ContentView: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.1), lineWidth: 1))
     }
 
+    private func accentSwatchColor(for name: String) -> Color {
+        switch name {
+        case "blue": return .blue
+        case "purple": return .purple
+        case "pink": return .pink
+        case "orange": return .orange
+        case "green": return .green
+        case "red": return .red
+        case "custom": return Color(hex: customThemeColorHex) ?? .blue
+        default: return .blue
+        }
+    }
+
     @ViewBuilder
     private func wallpaperPresetCard(id: String, title: String, icon: String) -> some View {
         let isSelected = (chatWallpaperPattern == id)
@@ -4407,27 +4369,26 @@ struct ContentView: View {
                 chatWallpaperPattern = id
             }
         } label: {
-            VStack(spacing: 6) {
+            VStack(spacing: 4) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.primary.opacity(0.06))
-                        .frame(height: 52)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.primary.opacity(0.05))
+                        .frame(height: 42)
                     
                     ChatWallpaperBackgroundView(pattern: id)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     
                     Image(systemName: icon)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(isSelected ? accentColorValue : Color.secondary)
                 }
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(isSelected ? accentColorValue : Color.secondary.opacity(0.2), lineWidth: isSelected ? 2 : 1)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(isSelected ? accentColorValue : Color.secondary.opacity(0.15), lineWidth: isSelected ? 1.5 : 0.8)
                 )
                 
                 Text(title)
-                    .font(.system(size: 11, weight: .medium))
-                    .fontWeight(isSelected ? .bold : .medium)
+                    .font(.system(size: 10.5, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? Color.primary : Color.secondary)
             }
             .frame(maxWidth: .infinity)
