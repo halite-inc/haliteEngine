@@ -48,7 +48,7 @@ jobs:
           fi
           xcodebuild -version
 
-      - name: Build macOS App
+      - name: Build macOS App & DMG
         run: |
           set -euo pipefail
           echo "Building appleint Release..."
@@ -72,6 +72,14 @@ jobs:
           cp -R "$APP_PATH" ./Halite.app
           zip -r -y appleint-macos.zip appleint.app
           zip -r -y Halite-macos.zip Halite.app
+
+          # Create DMG with Applications symlink for clean drag-and-drop install
+          rm -rf dmg_staging Halite.dmg
+          mkdir -p dmg_staging
+          cp -R Halite.app dmg_staging/
+          ln -s /Applications dmg_staging/Applications
+          hdiutil create -volname "Halite" -srcfolder dmg_staging -ov -format UDZO Halite.dmg
+          rm -rf dmg_staging
 
       - name: Prepare Release Info
         id: release_info
@@ -98,6 +106,7 @@ jobs:
           name: ${{ steps.release_info.outputs.TITLE }}
           body: ${{ inputs.changelog || github.event.head_commit.message }}
           files: |
+            Halite.dmg
             Halite-macos.zip
             appleint-macos.zip
           draft: false
