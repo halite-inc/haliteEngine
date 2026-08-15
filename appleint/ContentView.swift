@@ -1588,6 +1588,17 @@ struct ContentView: View {
                 .help("Share Transcript")
                 .disabled(thread.messages.isEmpty)
 
+                // Toggle Right Sidebar Button (placed to the left of right sidebar panel)
+                Button {
+                    withAnimation {
+                        showRightSidebar.toggle()
+                    }
+                } label: {
+                    Label("Toggle Sidebar", systemImage: "sidebar.right")
+                        .foregroundStyle(showRightSidebar ? .blue : .primary)
+                }
+                .help("Toggle Sidebar")
+
                 if showRightSidebar {
                     Picker("Sidebar Panel", selection: Binding(
                         get: { rightSidebarTab },
@@ -1609,17 +1620,6 @@ struct ContentView: View {
                     .pickerStyle(.segmented)
                     .frame(width: pickerWidth)
                 }
-
-                // Toggle Right Sidebar Button (placed at far right most position)
-                Button {
-                    withAnimation {
-                        showRightSidebar.toggle()
-                    }
-                } label: {
-                    Label("Toggle Sidebar", systemImage: "sidebar.right")
-                        .foregroundStyle(showRightSidebar ? .blue : .primary)
-                }
-                .help("Toggle Sidebar")
             }
         }
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
