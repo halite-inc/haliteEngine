@@ -4011,8 +4011,7 @@ struct ContentView: View {
     }
 
     private var updatesSettingsView: some View {
-        let updateManager = UpdateManager.shared
-        return VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 20) {
             // Version Info Header Card
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .center, spacing: 14) {
@@ -4036,7 +4035,7 @@ struct ContentView: View {
                     Spacer()
 
                     Button {
-                        Task { await updateManager.checkForUpdates() }
+                        Task { await updateManager.checkForUpdates(silent: false) }
                     } label: {
                         HStack(spacing: 6) {
                             if updateManager.state.isChecking {
@@ -4072,7 +4071,27 @@ struct ContentView: View {
             // Dynamic State Card
             switch updateManager.state {
             case .idle:
-                EmptyView()
+                HStack(spacing: 12) {
+                    Image(systemName: "arrow.clockwise.circle")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Ready to Check")
+                            .font(.headline)
+                        Text("Click Check for Updates above or open Settings to check GitHub Releases.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Check Now") {
+                        Task { await updateManager.checkForUpdates(silent: false) }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
             case .checking:
                 HStack(spacing: 12) {

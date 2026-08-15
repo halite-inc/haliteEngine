@@ -169,7 +169,8 @@ public final class UpdateManager: ObservableObject {
         }
 
         // If direct binary asset is not a direct zip/dmg, open browser
-        if !downloadURL.absoluteString.hasSuffix(".zip") && !downloadURL.absoluteString.hasSuffix(".dmg") {
+        let isDirectAsset = downloadURL.absoluteString.hasSuffix(".dmg") || downloadURL.absoluteString.hasSuffix(".zip")
+        if !isDirectAsset {
             NSWorkspace.shared.open(downloadURL)
             return
         }
@@ -191,7 +192,9 @@ public final class UpdateManager: ObservableObject {
 
                 do {
                     let downloadsDir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
-                    let destinationURL = downloadsDir.appendingPathComponent("Halite-\(release.version).zip")
+                    let ext = downloadURL.pathExtension.isEmpty ? "dmg" : downloadURL.pathExtension
+                    let filename = "Halite-\(release.version).\(ext)"
+                    let destinationURL = downloadsDir.appendingPathComponent(filename)
                     try? FileManager.default.removeItem(at: destinationURL)
                     try FileManager.default.copyItem(at: tempLocalURL, to: destinationURL)
 
@@ -213,7 +216,7 @@ public final class UpdateManager: ObservableObject {
     }
 
     public func installUpdate(fileURL: URL) {
-        // Reveal downloaded file in Finder and open it
+        // Reveal downloaded file in Finder and open/mount it
         NSWorkspace.shared.activateFileViewerSelecting([fileURL])
         NSWorkspace.shared.open(fileURL)
     }
@@ -261,16 +264,29 @@ public final class UpdateManager: ObservableObject {
             pubDate = formatter.date(from: pubDateStr)
         }
 
-        // Find downloadable asset (.zip or .dmg)
+        // Find downloadable asset (.dmg preferred, fallback to .zip)
         var downloadURL: URL? = nil
         if let assets = json["assets"] as? [[String: Any]] {
+            // First priority: DMG
             for asset in assets {
                 if let assetName = asset["name"] as? String,
-                   (assetName.hasSuffix(".zip") || assetName.hasSuffix(".dmg")),
+                   assetName.hasSuffix(".dmg"),
                    let downloadStr = asset["browser_download_url"] as? String,
                    let assetURL = URL(string: downloadStr) {
                     downloadURL = assetURL
                     break
+                }
+            }
+            // Fallback: ZIP
+            if downloadURL == nil {
+                for asset in assets {
+                    if let assetName = asset["name"] as? String,
+                       assetName.hasSuffix(".zip"),
+                       let downloadStr = asset["browser_download_url"] as? String,
+                       let assetURL = URL(string: downloadStr) {
+                        downloadURL = assetURL
+                        break
+                    }
                 }
             }
         }
