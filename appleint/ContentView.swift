@@ -1242,7 +1242,7 @@ struct ContentView: View {
                             }
                             .padding(.horizontal, 6)
                             .padding(.vertical, 4)
-                            .foregroundStyle(accentColorValue)
+                            .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
                         .help("Reasoning effort: \(aiEffortLevel)")
@@ -1533,8 +1533,8 @@ struct ContentView: View {
                         showModelPopover.toggle()
                     } label: {
                         HStack(spacing: 6) {
-                            Image(systemName: "cpu")
-                            Text(selectedModelDisplayName(for: thread))
+                            Image(systemName: modelPillSymbol(for: thread))
+                            Text(modelPillText(for: thread, centered: true))
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                         }
@@ -2283,10 +2283,7 @@ struct ContentView: View {
 
     private func modelPillText(for thread: ChatThread, centered: Bool) -> String {
         let modelName = selectedModelDisplayName(for: thread)
-        if centered {
-            return "\(providerDisplayName(for: thread)) • \(modelName)"
-        }
-        return modelName
+        return "\(providerDisplayName(for: thread)) • \(modelName)"
     }
     
     @ViewBuilder
