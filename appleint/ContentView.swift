@@ -1567,6 +1567,25 @@ struct ContentView: View {
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
+                // Share Menu Button (anchored to main chat header)
+                Menu {
+                    Button {
+                        copyTranscript(for: thread)
+                    } label: {
+                        Label("Copy as transcribe", systemImage: "doc.on.doc")
+                    }
+                    
+                    Button {
+                        downloadTranscript(for: thread)
+                    } label: {
+                        Label("Download transcribe into text file", systemImage: "arrow.down.doc")
+                    }
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .help("Share Transcript")
+                .disabled(thread.messages.isEmpty)
+
                 if showRightSidebar {
                     Picker("Sidebar Panel", selection: Binding(
                         get: { rightSidebarTab },
@@ -1590,25 +1609,6 @@ struct ContentView: View {
                         ? (rightSidebarSources.isEmpty ? 200 : 250)
                         : (rightSidebarSources.isEmpty ? 130 : 160))
                 }
-                
-                // Share Menu Button
-                Menu {
-                    Button {
-                        copyTranscript(for: thread)
-                    } label: {
-                        Label("Copy as transcribe", systemImage: "doc.on.doc")
-                    }
-                    
-                    Button {
-                        downloadTranscript(for: thread)
-                    } label: {
-                        Label("Download transcribe into text file", systemImage: "arrow.down.doc")
-                    }
-                } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-                .help("Share Transcript")
-                .disabled(thread.messages.isEmpty)
 
                 // Toggle Right Sidebar Button (placed at far right most position)
                 Button {
