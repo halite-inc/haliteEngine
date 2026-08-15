@@ -1544,9 +1544,7 @@ struct ContentView: View {
                 UserDeveloperSliderToggle(isDeveloper: thread.showSystemMessages) { isDeveloper in
                     manager.updateShowSystemMessages(id: thread.id, show: isDeveloper)
                 }
-            }
-            
-            ToolbarItem(placement: .navigation) {
+
                 if !useCenteredModelLook {
                     Button {
                         showModelPopover.toggle()
@@ -1564,10 +1562,8 @@ struct ContentView: View {
                         modelPopoverView(for: thread)
                     }
                 }
-            }
 
-            ToolbarItemGroup(placement: .primaryAction) {
-                // Share Menu Button (anchored to main chat header)
+                // Share Menu Button (anchored to main chat header, outside right sidebar)
                 Menu {
                     Button {
                         copyTranscript(for: thread)
@@ -1585,7 +1581,9 @@ struct ContentView: View {
                 }
                 .help("Share Transcript")
                 .disabled(thread.messages.isEmpty)
+            }
 
+            ToolbarItemGroup(placement: .primaryAction) {
                 if showRightSidebar {
                     Picker("Sidebar Panel", selection: Binding(
                         get: { rightSidebarTab },
