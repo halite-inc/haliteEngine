@@ -48,10 +48,16 @@ xcodebuild -project appleint.xcodeproj -scheme appleint -configuration Release -
 echo "📦 Packaging Halite.dmg and Halite-macos.zip..."
 rm -rf build/dmg_staging Halite.dmg Halite-macos.zip
 mkdir -p build/dmg_staging
-cp -R build/DerivedData/Build/Products/Release/appleint.app build/dmg_staging/Halite.app
+
+APP_PATH="build/DerivedData/Build/Products/Release/Halite.app"
+if [ ! -d "$APP_PATH" ]; then
+  APP_PATH="build/DerivedData/Build/Products/Release/appleint.app"
+fi
+
+cp -R "$APP_PATH" build/dmg_staging/Halite.app
 ln -s /Applications build/dmg_staging/Applications
 hdiutil create -volname "Halite" -srcfolder build/dmg_staging -ov -format UDZO Halite.dmg -quiet
-zip -r -y -q Halite-macos.zip build/DerivedData/Build/Products/Release/appleint.app
+zip -r -y -q Halite-macos.zip "$APP_PATH"
 
 # 4. Create and push git tag
 echo "🏷️ Creating and pushing git tag ${TAG}..."
