@@ -57,7 +57,9 @@ fi
 cp -R "$APP_PATH" build/dmg_staging/Halite.app
 ln -s /Applications build/dmg_staging/Applications
 hdiutil create -volname "Halite" -srcfolder build/dmg_staging -ov -format UDZO Halite.dmg -quiet
-zip -r -y -q Halite-macos.zip "$APP_PATH"
+
+ROOT_DIR="$(pwd)"
+(cd "$(dirname "$APP_PATH")" && zip -r -y -q "${ROOT_DIR}/Halite-macos.zip" "$(basename "$APP_PATH")")
 
 # 4. Create and push git tag
 echo "🏷️ Creating and pushing git tag ${TAG}..."

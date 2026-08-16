@@ -168,7 +168,7 @@ public final class UpdateManager: ObservableObject {
 
     // MARK: - Download & Install
 
-    public func downloadUpdate(release: AppReleaseInfo) {
+    public func downloadUpdate(release: AppReleaseInfo, autoInstall: Bool = true) {
         guard let downloadURL = release.downloadURL ?? release.htmlURL else {
             self.state = .error("No valid download link found for this release.")
             return
@@ -204,7 +204,11 @@ public final class UpdateManager: ObservableObject {
                     try? FileManager.default.removeItem(at: destinationURL)
                     try FileManager.default.copyItem(at: tempLocalURL, to: destinationURL)
 
-                    self?.state = .readyToInstall(fileURL: destinationURL, release: release)
+                    if autoInstall {
+                        self?.installUpdate(fileURL: destinationURL)
+                    } else {
+                        self?.state = .readyToInstall(fileURL: destinationURL, release: release)
+                    }
                 } catch {
                     self?.state = .error("Could not save download: \(error.localizedDescription)")
                 }
@@ -221,11 +225,33 @@ public final class UpdateManager: ObservableObject {
         task.resume()
     }
 
+    nonisolated private static func findAppBundle(in directory: URL) -> URL? {
+        if directory.pathExtension.lowercased() == "app" {
+            return directory
+        }
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+
+        for case let fileURL as URL in enumerator {
+            if fileURL.pathExtension.lowercased() == "app" {
+                return fileURL
+            }
+        }
+        return nil
+    }
+
     public func installUpdate(fileURL: URL) {
         self.state = .installing
 
         let currentAppBundleURL = Bundle.main.bundleURL
-        let currentAppPath = currentAppBundleURL.path
+        var targetInstallPath = currentAppBundleURL.path
+        if targetInstallPath.contains("/DerivedData/") || targetInstallPath.contains("/Build/Products/") || targetInstallPath.contains("/var/folders/") || targetInstallPath.contains("/tmp/") {
+            targetInstallPath = "/Applications/Halite.app"
+        }
+
         let pid = ProcessInfo.processInfo.processIdentifier
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -245,10 +271,7 @@ public final class UpdateManager: ObservableObject {
                     unzipProcess.waitUntilExit()
 
                     if unzipProcess.terminationStatus == 0 {
-                        let contents = try FileManager.default.contentsOfDirectory(at: stagingDir, includingPropertiesForKeys: nil)
-                        if let appURL = contents.first(where: { $0.pathExtension == "app" }) {
-                            extractedAppPath = appURL.path
-                        }
+                        extractedAppPath = Self.findAppBundle(in: stagingDir)?.path
                     }
                 } else if ext == "dmg" {
                     // Mount DMG headlessly
@@ -262,8 +285,7 @@ public final class UpdateManager: ObservableObject {
                     attachProcess.waitUntilExit()
 
                     if attachProcess.terminationStatus == 0 {
-                        let contents = try? FileManager.default.contentsOfDirectory(at: mountPoint, includingPropertiesForKeys: nil)
-                        if let appURL = contents?.first(where: { $0.pathExtension == "app" }) {
+                        if let appURL = Self.findAppBundle(in: mountPoint) {
                             let localAppCopy = stagingDir.appendingPathComponent(appURL.lastPathComponent)
                             let copyProcess = Process()
                             copyProcess.executableURL = URL(fileURLWithPath: "/bin/cp")
@@ -299,33 +321,36 @@ public final class UpdateManager: ObservableObject {
                 let updaterScriptPath = "/tmp/halite_updater_\(scriptId).sh"
                 let scriptContent = """
                 #!/bin/bash
-                
-                # Wait up to 3 seconds for app PID \(pid) to exit cleanly
-                for i in {1..15}; do
+                exec > /tmp/halite_updater.log 2>&1
+                set -x
+
+                # 1. Kill old running instance
+                for i in {1..25}; do
                     if ! kill -0 \(pid) 2>/dev/null; then
                         break
                     fi
-                    sleep 0.2
+                    kill -TERM \(pid) 2>/dev/null || true
+                    sleep 0.1
                 done
-                
-                # Force kill PID if still alive
                 kill -9 \(pid) 2>/dev/null || true
-                sleep 0.3
-                
-                # Replace the target application bundle
-                if [ -d "\(currentAppPath)" ]; then
-                    rm -rf "\(currentAppPath)"
+                sleep 0.2
+
+                # 2. Replace target application bundle
+                if [ -d "\(targetInstallPath)" ]; then
+                    rm -rf "\(targetInstallPath)"
                 fi
-                
-                /usr/bin/ditto "\(newAppPath)" "\(currentAppPath)"
-                
-                # Remove quarantine attribute
-                /usr/bin/xattr -dr com.apple.quarantine "\(currentAppPath)" 2>/dev/null || true
-                
-                # Relaunch the new application
-                /usr/bin/open "\(currentAppPath)"
-                
-                # Cleanup staging
+                mkdir -p "$(dirname "\(targetInstallPath)")"
+
+                /usr/bin/ditto "\(newAppPath)" "\(targetInstallPath)"
+
+                # 3. Strip quarantine attribute
+                /usr/bin/xattr -dr com.apple.quarantine "\(targetInstallPath)" 2>/dev/null || true
+
+                # 4. Relaunch new application
+                sleep 0.3
+                /usr/bin/open -n -a "\(targetInstallPath)" || /usr/bin/open "\(targetInstallPath)"
+
+                # 5. Cleanup
                 rm -rf "\(stagingDir.path)"
                 rm -f "\(updaterScriptPath)"
                 exit 0
@@ -346,10 +371,12 @@ public final class UpdateManager: ObservableObject {
                 launcherProcess.arguments = ["-c", "nohup /bin/bash \"\(updaterScriptPath)\" >/tmp/halite_updater.log 2>&1 &"]
                 try launcherProcess.run()
 
-                // Immediately terminate the running app
+                // Immediately terminate running app
                 DispatchQueue.main.async {
-                    NSApp.windows.forEach { $0.close() }
-                    NSApp.terminate(nil)
+                    for window in NSApplication.shared.windows {
+                        window.orderOut(nil)
+                    }
+                    NSApplication.shared.terminate(nil)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         exit(0)
                     }
