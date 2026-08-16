@@ -260,7 +260,7 @@ public struct ChatThread: Codable, Identifiable {
         case .openRouter: return openRouterModelId ?? "google/gemini-2.0-flash-001"
         case .openAI: return openAIModelId ?? "gpt-4o"
         case .lmStudio: return lmStudioModelId ?? "LM Studio local model"
-        case .mlx: return mlxModelId ?? "Apple MLX local model"
+        case .mlx: return mlxModelId ?? "None (Select Model)"
         }
     }
 }

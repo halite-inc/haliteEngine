@@ -1240,7 +1240,7 @@ public final class ChatManager {
             systemInstructions: persona.instructions,
             temperature: persona.temperature,
             lmStudioModelId: lmStudioModelId ?? lmStudioAvailableModels.first,
-            mlxModelId: mlxModelId ?? mlxScanner.models.first?.id,
+            mlxModelId: mlxModelId,
             geminiModelId: geminiModelId,
             openRouterModelId: openRouterModelId,
             openAIModelId: openAIModelId,
@@ -1412,8 +1412,14 @@ public final class ChatManager {
             threads[index].mlxModelId = modelId
             saveThreads()
         }
-        if let modelId = modelId {
-            self.mlxModelId = modelId
+        self.mlxModelId = modelId
+
+        if let modelId = modelId, !modelId.isEmpty {
+            if let model = mlxScanner.models.first(where: { $0.id == modelId || $0.path == modelId }), model.isMLXNative {
+                Task {
+                    await InProcessMLXEngine.shared.inject(model: model)
+                }
+            }
         }
     }
     
@@ -3162,7 +3168,28 @@ public final class ChatManager {
                 }
             } else if provider == .mlx {
                 // --- APPLE MLX DIRECT IN-PROCESS METAL GENERATION ---
-                let localModel = self.mlxScanner.models.first(where: { $0.id == mlxModelId || $0.path == mlxModelId || $0.name == mlxModelId }) ?? self.mlxScanner.models.first
+                guard let chosenModelId = mlxModelId ?? self.mlxModelId, !chosenModelId.isEmpty else {
+                    self.controller(for: threadId).fail()
+                    self.toolRequestManager.finishProcessing(threadId: threadId)
+                    self.updateAssistantMessage(
+                        threadId: threadId,
+                        messageId: assistantMessageId,
+                        text: "⚠️ No Apple MLX model is currently selected. Please click the model selector at the top or in chat settings and choose a local model to start chatting."
+                    )
+                    return
+                }
+
+                let localModel = self.mlxScanner.models.first(where: { $0.id == chosenModelId || $0.path == chosenModelId || $0.name == chosenModelId })
+                guard let model = localModel else {
+                    self.controller(for: threadId).fail()
+                    self.toolRequestManager.finishProcessing(threadId: threadId)
+                    self.updateAssistantMessage(
+                        threadId: threadId,
+                        messageId: assistantMessageId,
+                        text: "⚠️ The selected Apple MLX model '\(chosenModelId)' was not found in your scanned local directories."
+                    )
+                    return
+                }
                 
                 var threadMessages: [ChatMessage] = []
                 if let idx = self.threads.firstIndex(where: { $0.id == threadId }) {
@@ -3174,7 +3201,7 @@ public final class ChatManager {
                     )
                 }
                 
-                if let model = localModel, model.isMLXNative {
+                if model.isMLXNative {
                     do {
                         self.updateAssistantMessage(threadId: threadId, messageId: assistantMessageId, text: "")
                         var accumulated = ""
@@ -3208,7 +3235,7 @@ public final class ChatManager {
                 
                 // Fallback to local server if direct inference could not load model or model is non-native
                 let baseURL = self.mlxBaseURL
-                let modelId = mlxModelId ?? self.mlxModelId ?? self.mlxScanner.models.first?.id ?? "default"
+                let modelId = chosenModelId
             } else if provider == .lmStudio {
                 // --- LM STUDIO LOCAL SERVER GENERATION ---
                 let baseURL = self.lmStudioBaseURL

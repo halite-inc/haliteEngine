@@ -1682,10 +1682,12 @@ struct ContentView: View {
                                     Image(systemName: "cpu")
                                         .font(.system(size: 11))
                                         .foregroundStyle(.indigo)
-                                    Text(thread.mlxModelId ?? "Apple MLX Model")
+                                    Text(thread.mlxModelId.flatMap { modelId in
+                                        manager.mlxScanner.models.first(where: { $0.id == modelId })?.displayName ?? modelId
+                                    } ?? "None (Select Model)")
                                         .font(.caption2)
                                         .fontWeight(.bold)
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(thread.mlxModelId == nil ? .orange : .secondary)
                                 } else if thread.provider == .gemini {
                                     Image(systemName: "sparkles")
                                         .font(.system(size: 11))
@@ -2270,8 +2272,8 @@ struct ContentView: View {
             }
             
             if thread.provider == .mlx {
-                let selectedModelId = thread.mlxModelId ?? manager.mlxScanner.models.first?.id ?? ""
-                let selectedLocalModel = manager.mlxScanner.models.first(where: { $0.id == selectedModelId })
+                let selectedModelId = thread.mlxModelId ?? ""
+                let selectedLocalModel = selectedModelId.isEmpty ? nil : manager.mlxScanner.models.first(where: { $0.id == selectedModelId })
                 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
@@ -2327,9 +2329,12 @@ struct ContentView: View {
                     
                     if !manager.mlxScanner.models.isEmpty {
                         Picker("Model", selection: Binding(
-                            get: { thread.mlxModelId ?? manager.mlxScanner.models.first?.id ?? "" },
-                            set: { manager.updateMLXModel(id: thread.id, modelId: $0.isEmpty ? nil : $0) }
+                            get: { thread.mlxModelId ?? "" },
+                            set: { selectedId in
+                                manager.updateMLXModel(id: thread.id, modelId: selectedId.isEmpty ? nil : selectedId)
+                            }
                         )) {
+                            Text("None (Select a model...)").tag("")
                             ForEach(manager.mlxScanner.models) { model in
                                 let badge = model.isMLXNative ? "⚡ [MLX \(model.quantization)] " : "📦 [\(model.quantization)] "
                                 Text("\(badge)\(model.displayName) (\(model.formattedSize))").tag(model.id)
@@ -2346,6 +2351,10 @@ struct ContentView: View {
                                     .font(.system(size: 9.5, weight: .medium))
                                     .foregroundStyle(.green)
                             }
+                        } else if selectedLocalModel == nil {
+                            Text("No model selected. Choose a local model above to inject into Metal RAM.")
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(.secondary)
                         } else {
                             Text("Scanned from ~/.lmstudio/models and cache")
                                 .font(.system(size: 9.5))
