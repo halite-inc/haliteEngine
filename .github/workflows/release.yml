@@ -57,10 +57,12 @@ jobs:
             -configuration Release \
             -destination "platform=macOS" \
             -derivedDataPath build/DerivedData \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            clean build
 
           APP_PATH=$(find build/DerivedData/Build/Products/Release -name "*.app" -type d | head -n 1)
           if [ -z "$APP_PATH" ]; then

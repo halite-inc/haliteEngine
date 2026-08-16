@@ -896,52 +896,8 @@ struct ContentView: View {
             
             // Messages List & Floating Tool Request Overlay
             ZStack(alignment: .bottomLeading) {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        if thread.messages.isEmpty {
-                            emptyThreadWelcomeView(for: thread)
-                                .padding(.top, 40)
-                                .padding(.bottom, 120)
-                        } else {
-                            LazyVStack(spacing: 10) {
-                                ForEach(visibleTranscriptMessages(in: thread)) { message in
-                                    messageBubble(for: message, in: thread)
-                                        .id(message.id)
-                                        .transition(.asymmetric(
-                                            insertion: .move(edge: .bottom).combined(with: .opacity),
-                                            removal: .opacity
-                                        ))
-                                }
-                            }
-                            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: thread.messages.count)
-                            .padding()
-                            .padding(.bottom, manager.toolRequestManager.activeRequestThreadId == thread.id ? 220 : 10)
-                        }
-                    }
-                    .onChange(of: thread.messages.count) {
-                        userHasScrolledUp = false
-                        scrollToBottom(proxy: proxy, thread: thread, animated: true)
-                    }
-                    .onChange(of: thread.messages.last?.text.count ?? 0) {
-                        if manager.isGenerating && !userHasScrolledUp {
-                            scrollToBottom(proxy: proxy, thread: thread, animated: false)
-                        }
-                    }
-                    .onChange(of: manager.isGenerating) {
-                        if !manager.isGenerating {
-                            userHasScrolledUp = false
-                        }
-                    }
-                    .onAppear {
-                        userHasScrolledUp = false
-                        scrollToBottom(proxy: proxy, thread: thread, animated: false)
-                    }
-                    .onScrollPhaseChange { _, newPhase in
-                        if manager.isGenerating && newPhase == .interacting {
-                            userHasScrolledUp = true
-                        }
-                    }
-                }
+                messagesScrollView(for: thread)
+
                 // Floating Card (Tool Request Card)
                 if manager.toolRequestManager.activeRequest != nil,
                    manager.toolRequestManager.activeRequestThreadId == thread.id {
@@ -1240,58 +1196,19 @@ struct ContentView: View {
                                     .offset(x: 5, y: -5)
                                 }
                             }
-                            
                             ForEach(attachedFiles) { file in
-                                HStack(spacing: 7) {
-                                    Button {
-                                        previewingFile = file
-                                    } label: {
-                                        HStack(spacing: 6) {
-                                            Image(systemName: file.isPDF ? "doc.richtext.fill" : "doc.text.fill")
-                                                .font(.system(size: 15, weight: .semibold))
-                                                .foregroundStyle(file.isPDF ? Color.red : Color.blue)
-                                            VStack(alignment: .leading, spacing: 1) {
-                                                Text(file.name)
-                                                    .font(.system(size: 11, weight: .semibold))
-                                                    .lineLimit(1)
-                                                HStack(spacing: 3) {
-                                                    if let pageCount = file.pageCount {
-                                                        Text("\(pageCount) pages •")
-                                                    }
-                                                    Text(ByteCountFormatter.string(fromByteCount: file.fileSize, countStyle: .file))
-                                                }
-                                                .font(.system(size: 9))
-                                                .foregroundStyle(.secondary)
-                                            }
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("Click to preview file contents")
-                                    
-                                    Button(action: {
+                                AttachedFileChipView(
+                                    file: file,
+                                    previewingFile: $previewingFile,
+                                    onRemove: {
                                         withAnimation {
                                             attachedFiles.removeAll(where: { $0.id == file.id })
                                             if previewingFile?.id == file.id {
                                                 previewingFile = nil
                                             }
                                         }
-                                    }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(.secondary.opacity(0.7))
                                     }
-                                    .buttonStyle(.plain)
-                                }
-                                .padding(.horizontal, 9)
-                                .padding(.vertical, 5)
-                                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.secondary.opacity(0.16), lineWidth: 0.5))
-                                .popover(item: Binding(
-                                    get: { previewingFile?.id == file.id ? previewingFile : nil },
-                                    set: { if $0 == nil { previewingFile = nil } }
-                                ), arrowEdge: .top) { fileItem in
-                                    AttachedFilePreviewPopover(file: fileItem)
-                                }
+                                )
                             }
                         }
                         .padding(.horizontal, 14)
@@ -1522,182 +1439,12 @@ struct ContentView: View {
             
             // Live Terminal Panel
             if showTerminalPanel {
-                VStack(spacing: 0) {
-                    // Drag handle & header
-                    HStack(spacing: 8) {
-                        Image(systemName: "terminal.fill")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.green)
-                        Text("TERMINAL")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                            .foregroundStyle(.green.opacity(0.9))
-                        
-                        Capsule()
-                            .fill(Color.green.opacity(0.3))
-                            .frame(width: 6, height: 6)
-                            .overlay(Capsule().fill(manager.terminalLogs.isEmpty ? Color.gray : Color.green))
-                        
-                        Text("\(manager.terminalLogs.count) entries")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                        
-                        Spacer()
-
-                        Text(manager.terminalCurrentDirectory)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .frame(maxWidth: 260, alignment: .trailing)
-                        
-                        Button {
-                            manager.clearTerminalLogs()
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Clear Terminal")
-                        
-                        Button {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                showTerminalPanel = false
-                            }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Close Terminal")
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-                    .gesture(
-                        DragGesture()
-                            .onChanged { value in
-                                let newHeight = terminalPanelHeight - value.translation.height
-                                terminalPanelHeight = max(120, min(500, newHeight))
-                            }
-                    )
-                    .onHover { hovering in
-                        if hovering {
-                            NSCursor.resizeUpDown.push()
-                        } else {
-                            NSCursor.pop()
-                        }
-                    }
-                    
-                    Divider().opacity(0.3)
-                    
-                    // Terminal output
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 2) {
-                                if manager.terminalLogs.isEmpty {
-                                    HStack {
-                                        Text("Enter a command below to start a zsh session.")
-                                            .font(.system(size: 11, design: .monospaced))
-                                            .foregroundStyle(.secondary)
-                                            .italic()
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 20)
-                                } else {
-                                    ForEach(manager.terminalLogs) { entry in
-                                        VStack(alignment: .leading, spacing: 1) {
-                                            HStack(spacing: 6) {
-                                                Text(entry.timestamp, style: .time)
-                                                    .font(.system(size: 9, design: .monospaced))
-                                                    .foregroundStyle(.secondary.opacity(0.6))
-                                                Text(entry.isError ? "✗" : "✓")
-                                                    .font(.system(size: 10, weight: .bold))
-                                                    .foregroundStyle(entry.isError ? .red : .green)
-                                                Text("$")
-                                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                                    .foregroundStyle(.green)
-                                                Text(entry.command)
-                                                    .font(.system(size: 11, design: .monospaced))
-                                                    .foregroundStyle(.primary)
-                                                    .lineLimit(2)
-                                            }
-                                            
-                                            Text(entry.output)
-                                                .font(.system(size: 10, design: .monospaced))
-                                                .foregroundStyle(entry.isError ? .red.opacity(0.8) : .secondary.opacity(0.7))
-                                                .textSelection(.enabled)
-                                                .padding(.leading, 20)
-                                        }
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 3)
-                                        .id(entry.id)
-                                    }
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
-                        .onChange(of: manager.terminalLogs.count) {
-                            if let lastId = manager.terminalLogs.last?.id {
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    proxy.scrollTo(lastId, anchor: .bottom)
-                                }
-                            }
-                        }
-                    }
-
-                    Divider().opacity(0.3)
-
-                    HStack(spacing: 8) {
-                        Text("❯")
-                            .font(.system(size: 13, weight: .bold, design: .monospaced))
-                            .foregroundStyle(.green)
-
-                        TextField("Enter a zsh command", text: $terminalCommand)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 12, design: .monospaced))
-                            .disabled(manager.isTerminalCommandRunning)
-                            .onSubmit {
-                                let command = terminalCommand
-                                terminalCommand = ""
-                                manager.runTerminalCommand(command)
-                            }
-
-                        if manager.isTerminalCommandRunning {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Button("Run") {
-                                let command = terminalCommand
-                                terminalCommand = ""
-                                manager.runTerminalCommand(command)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .disabled(terminalCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                }
-                .frame(height: terminalPanelHeight)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color(nsColor: .textBackgroundColor).opacity(0.95))
+                ChatLiveTerminalPanel(
+                    manager: manager,
+                    showTerminalPanel: $showTerminalPanel,
+                    terminalPanelHeight: $terminalPanelHeight,
+                    terminalCommand: $terminalCommand
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Color.green.opacity(0.65), lineWidth: 2)
-                        .allowsHitTesting(false)
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-                .transition(.asymmetric(
-                    insertion: .move(edge: .bottom).combined(with: .opacity),
-                    removal: .move(edge: .bottom).combined(with: .opacity)
-                ))
             }
 
         }
@@ -1802,7 +1549,7 @@ struct ContentView: View {
                 .help("Toggle Sidebar")
             }
         }
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .hideWindowToolbarBackgroundIfAvailable()
     }
     
     @ViewBuilder
@@ -3448,6 +3195,56 @@ struct ContentView: View {
         manager.setLibrarySkill(apiID: item.id, name: item.name, summary: item.description, instructions: item.promptDirective, installed: false)
     }
     
+    @ViewBuilder
+    private func messagesScrollView(for thread: ChatThread) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                if thread.messages.isEmpty {
+                    emptyThreadWelcomeView(for: thread)
+                        .padding(.top, 40)
+                        .padding(.bottom, 120)
+                } else {
+                    LazyVStack(spacing: 10) {
+                        ForEach(visibleTranscriptMessages(in: thread)) { message in
+                            messageBubble(for: message, in: thread)
+                                .id(message.id)
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .bottom).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
+                        }
+                    }
+                    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: thread.messages.count)
+                    .padding()
+                    .padding(.bottom, manager.toolRequestManager.activeRequestThreadId == thread.id ? 220 : 10)
+                }
+            }
+            .onChange(of: thread.messages.count) {
+                userHasScrolledUp = false
+                scrollToBottom(proxy: proxy, thread: thread, animated: true)
+            }
+            .onChange(of: thread.messages.last?.text.count ?? 0) {
+                if manager.isGenerating && !userHasScrolledUp {
+                    scrollToBottom(proxy: proxy, thread: thread, animated: false)
+                }
+            }
+            .onChange(of: manager.isGenerating) {
+                if !manager.isGenerating {
+                    userHasScrolledUp = false
+                }
+            }
+            .onAppear {
+                userHasScrolledUp = false
+                scrollToBottom(proxy: proxy, thread: thread, animated: false)
+            }
+            .trackScrollInteractingIfAvailable {
+                if manager.isGenerating {
+                    userHasScrolledUp = true
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private func emptyThreadWelcomeView(for thread: ChatThread) -> some View {
         VStack(spacing: 16) {
@@ -11116,7 +10913,250 @@ final class SpeechDictationManager: NSObject, SFSpeechRecognizerDelegate {
     }
 }
 
-// MARK: - Attached File Preview Popover
+// MARK: - Live Terminal Panel
+
+struct ChatLiveTerminalPanel: View {
+    var manager: ChatManager
+    @Binding var showTerminalPanel: Bool
+    @Binding var terminalPanelHeight: CGFloat
+    @Binding var terminalCommand: String
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Drag handle & header
+            HStack(spacing: 8) {
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.green)
+                Text("TERMINAL")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.green.opacity(0.9))
+                
+                Circle()
+                    .fill(manager.terminalLogs.isEmpty ? Color.gray : Color.green)
+                    .frame(width: 6, height: 6)
+                
+                Text("\(manager.terminalLogs.count) entries")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                
+                Spacer()
+
+                Text(manager.terminalCurrentDirectory)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 260, alignment: .trailing)
+                
+                Button {
+                    manager.clearTerminalLogs()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear Terminal")
+                
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        showTerminalPanel = false
+                    }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Close Terminal")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        let newHeight = terminalPanelHeight - value.translation.height
+                        terminalPanelHeight = max(120, min(500, newHeight))
+                    }
+            )
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.resizeUpDown.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            
+            Divider().opacity(0.3)
+            
+            // Terminal output
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        if manager.terminalLogs.isEmpty {
+                            HStack {
+                                Text("Enter a command below to start a zsh session.")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .italic()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 20)
+                        } else {
+                            ForEach(manager.terminalLogs) { entry in
+                                VStack(alignment: .leading, spacing: 1) {
+                                    HStack(spacing: 6) {
+                                        Text(entry.timestamp, style: .time)
+                                            .font(.system(size: 9, design: .monospaced))
+                                            .foregroundStyle(.secondary.opacity(0.6))
+                                        Text(entry.isError ? "✗" : "✓")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundStyle(entry.isError ? .red : .green)
+                                        Text("$")
+                                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                            .foregroundStyle(.green)
+                                        Text(entry.command)
+                                            .font(.system(size: 11, design: .monospaced))
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(2)
+                                    }
+                                    
+                                    Text(entry.output)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(entry.isError ? .red.opacity(0.8) : .secondary.opacity(0.7))
+                                        .textSelection(.enabled)
+                                        .padding(.leading, 20)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 3)
+                                .id(entry.id)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .onChange(of: manager.terminalLogs.count) {
+                    if let lastId = manager.terminalLogs.last?.id {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo(lastId, anchor: .bottom)
+                        }
+                    }
+                }
+            }
+
+            Divider().opacity(0.3)
+
+            HStack(spacing: 8) {
+                Text("❯")
+                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.green)
+
+                TextField("Enter a zsh command", text: $terminalCommand)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, design: .monospaced))
+                    .disabled(manager.isTerminalCommandRunning)
+                    .onSubmit {
+                        let command = terminalCommand
+                        terminalCommand = ""
+                        manager.runTerminalCommand(command)
+                    }
+
+                if manager.isTerminalCommandRunning {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Button("Run") {
+                        let command = terminalCommand
+                        terminalCommand = ""
+                        manager.runTerminalCommand(command)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(terminalCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .frame(height: terminalPanelHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(nsColor: .textBackgroundColor).opacity(0.95))
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.green.opacity(0.65), lineWidth: 2)
+                .allowsHitTesting(false)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+        .transition(.asymmetric(
+            insertion: .move(edge: .bottom).combined(with: .opacity),
+            removal: .move(edge: .bottom).combined(with: .opacity)
+        ))
+    }
+}
+
+// MARK: - Attached File Chip & Preview Popover
+
+struct AttachedFileChipView: View {
+    let file: AttachedFile
+    @Binding var previewingFile: AttachedFile?
+    let onRemove: () -> Void
+
+    private var isPreviewingBinding: Binding<AttachedFile?> {
+        Binding(
+            get: { previewingFile?.id == file.id ? previewingFile : nil },
+            set: { if $0 == nil { previewingFile = nil } }
+        )
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Button {
+                previewingFile = file
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: file.isPDF ? "doc.richtext.fill" : "doc.text.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(file.isPDF ? Color.red : Color.blue)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(file.name)
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                        HStack(spacing: 3) {
+                            if let pageCount = file.pageCount {
+                                Text("\(pageCount) pages •")
+                            }
+                            Text(ByteCountFormatter.string(fromByteCount: file.fileSize, countStyle: .file))
+                        }
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .help("Click to preview file contents")
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.secondary.opacity(0.16), lineWidth: 0.5))
+        .popover(item: isPreviewingBinding, arrowEdge: .top) { (fileItem: AttachedFile) in
+            AttachedFilePreviewPopover(file: fileItem)
+        }
+    }
+}
 
 struct AttachedFilePreviewPopover: View {
     let file: AttachedFile
@@ -11170,3 +11210,30 @@ struct AttachedFilePreviewPopover: View {
         .frame(width: 320)
     }
 }
+
+// MARK: - Compatibility Extensions
+
+private extension View {
+    @ViewBuilder
+    func hideWindowToolbarBackgroundIfAvailable() -> some View {
+        if #available(macOS 15.0, *) {
+            self.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        } else {
+            self
+        }
+    }
+
+    @ViewBuilder
+    func trackScrollInteractingIfAvailable(isInteracting: @escaping () -> Void) -> some View {
+        if #available(macOS 15.0, *) {
+            self.onScrollPhaseChange { _, newPhase in
+                if newPhase == .interacting {
+                    isInteracting()
+                }
+            }
+        } else {
+            self
+        }
+    }
+}
+
