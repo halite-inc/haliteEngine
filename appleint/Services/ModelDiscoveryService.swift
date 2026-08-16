@@ -19,8 +19,15 @@ actor ModelDiscoveryService {
     private let cacheLifetime: TimeInterval = 30
     private let networkSession: URLSession
 
-    init(networkSession: URLSession = .shared) {
-        self.networkSession = networkSession
+    init(networkSession: URLSession? = nil) {
+        if let networkSession {
+            self.networkSession = networkSession
+        } else {
+            let config = URLSessionConfiguration.ephemeral
+            config.timeoutIntervalForRequest = 4.0
+            config.timeoutIntervalForResource = 6.0
+            self.networkSession = URLSession(configuration: config)
+        }
     }
 
     func discover(baseURL: String, force: Bool = false) async -> LMStudioModelSnapshot? {

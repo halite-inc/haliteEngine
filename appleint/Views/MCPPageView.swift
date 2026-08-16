@@ -12,6 +12,7 @@ struct MCPPageView: View {
     @State private var expandedToolIds: Set<String> = []
     @State private var searchText: String = ""
     @State private var showingAddSheet: Bool = false
+    @State private var isAddingServer: Bool = false
 
     // New server modal fields
     @State private var newServerName: String = ""
@@ -92,15 +93,26 @@ struct MCPPageView: View {
 
                     Menu {
                         Button("Add Filesystem Server (npx)") { addFilesystemTemplate() }
+                            .disabled(isAddingServer)
                         Button("Add Fetch Server (uvx)") { addFetchTemplate() }
+                            .disabled(isAddingServer)
                         Button("Add SQLite Server (uvx)") { addSQLiteTemplate() }
+                            .disabled(isAddingServer)
                         Button("Add Memory Graph Server (npx)") { addMemoryTemplate() }
+                            .disabled(isAddingServer)
                         Divider()
                         Button("Add Custom Server…") { showingAddSheet = true }
+                            .disabled(isAddingServer)
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: "plus")
-                            Text("Add Server")
+                            if isAddingServer {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                Text("Adding…")
+                            } else {
+                                Image(systemName: "plus")
+                                Text("Add Server")
+                            }
                         }
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 12)
@@ -109,6 +121,7 @@ struct MCPPageView: View {
                         .background(Capsule().fill(LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing)))
                     }
                     .menuStyle(.borderlessButton)
+                    .disabled(isAddingServer)
                     .fixedSize()
                 }
             }
@@ -511,7 +524,9 @@ struct MCPPageView: View {
             HStack {
                 Spacer()
                 Button("Cancel") { showingAddSheet = false }.buttonStyle(.plain)
-                Button("Add Server") {
+                Button(isAddingServer ? "Adding…" : "Add Server") {
+                    guard !isAddingServer else { return }
+                    isAddingServer = true
                     let args = newServerArgs.split(separator: " ").map(String.init)
                     let config = MCPServerConfig(
                         command: newServerCommand.isEmpty ? nil : newServerCommand,
@@ -522,9 +537,10 @@ struct MCPPageView: View {
                     mcpManager.addTemplate(name: name, config: config)
                     showingAddSheet = false
                     editorJSONText = mcpManager.rawConfigJSON
+                    isAddingServer = false
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(newServerName.isEmpty || (newServerCommand.isEmpty && newServerURL.isEmpty))
+                .disabled(isAddingServer || newServerName.isEmpty || (newServerCommand.isEmpty && newServerURL.isEmpty))
             }
         }
         .padding(24)
@@ -564,6 +580,8 @@ struct MCPPageView: View {
     }
 
     private func addFilesystemTemplate() {
+        guard !isAddingServer else { return }
+        isAddingServer = true
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let config = MCPServerConfig(
             command: "npx",
@@ -571,18 +589,28 @@ struct MCPPageView: View {
         )
         mcpManager.addTemplate(name: "filesystem", config: config)
         editorJSONText = mcpManager.rawConfigJSON
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            isAddingServer = false
+        }
     }
 
     private func addFetchTemplate() {
+        guard !isAddingServer else { return }
+        isAddingServer = true
         let config = MCPServerConfig(
             command: "uvx",
             args: ["mcp-server-fetch"]
         )
         mcpManager.addTemplate(name: "fetch", config: config)
         editorJSONText = mcpManager.rawConfigJSON
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            isAddingServer = false
+        }
     }
 
     private func addSQLiteTemplate() {
+        guard !isAddingServer else { return }
+        isAddingServer = true
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let config = MCPServerConfig(
             command: "uvx",
@@ -590,14 +618,22 @@ struct MCPPageView: View {
         )
         mcpManager.addTemplate(name: "sqlite", config: config)
         editorJSONText = mcpManager.rawConfigJSON
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            isAddingServer = false
+        }
     }
 
     private func addMemoryTemplate() {
+        guard !isAddingServer else { return }
+        isAddingServer = true
         let config = MCPServerConfig(
             command: "npx",
             args: ["-y", "@modelcontextprotocol/server-memory"]
         )
         mcpManager.addTemplate(name: "memory", config: config)
         editorJSONText = mcpManager.rawConfigJSON
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            isAddingServer = false
+        }
     }
 }

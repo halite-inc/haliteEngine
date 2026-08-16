@@ -203,6 +203,16 @@ private actor MCPProcessClient {
             }
         }
 
+        errPipe.fileHandleForReading.readabilityHandler = { handle in
+            let errChunk = handle.availableData
+            guard !errChunk.isEmpty else { return }
+            #if DEBUG
+            if let errStr = String(data: errChunk, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !errStr.isEmpty {
+                print("[MCP stderr] \(errStr)")
+            }
+            #endif
+        }
+
         try proc.run()
 
         // Handshake: initialize
@@ -234,7 +244,15 @@ private actor MCPProcessClient {
         stderrPipe?.fileHandleForReading.readabilityHandler = nil
         if let proc = process, proc.isRunning {
             proc.terminate()
+            // Reap the child process immediately to prevent zombies
+            DispatchQueue.global(qos: .utility).async {
+                proc.waitUntilExit()
+            }
         }
+        // Close pipe file handles to release associated file descriptors
+        try? stdinPipe?.fileHandleForWriting.close()
+        try? stdoutPipe?.fileHandleForReading.close()
+        try? stderrPipe?.fileHandleForReading.close()
         process = nil
         stdinPipe = nil
         stdoutPipe = nil

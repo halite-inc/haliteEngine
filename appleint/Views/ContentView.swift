@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 import Speech
 import AVFoundation
 import AppKit
+import PDFKit
 
 enum SidebarMode: String, CaseIterable, Identifiable {
     case chats = "Chats"
@@ -243,10 +244,16 @@ struct ContentView: View {
     @State private var hoveredMessageId: UUID? = nil
     @State private var editingUserMessageId: UUID? = nil
     @State private var attachedImageBase64: String? = nil
+    @State private var attachedFiles: [AttachedFile] = []
+    @State private var isComposerDropTargeted: Bool = false
+    @State private var previewingFile: AttachedFile? = nil
     @State private var forceWebSearchNextMessage: Bool = false
     @State private var showApiLibraryModal: Bool = false
     @State private var showEffortPopover: Bool = false
     @State private var showShareCopiedToast: Bool = false
+    @State private var activeSelectedText: String? = nil
+    @State private var selectionCenterInLocal: CGPoint? = nil
+    @State private var quotedFollowUpText: String? = nil
     @AppStorage("aiEffortLevel") private var aiEffortLevel: String = AIEffortLevel.medium.rawValue
     
     private var accentColorValue: Color {
@@ -337,7 +344,7 @@ struct ContentView: View {
         case tools = "Tools & Modes"
         case apiKeys = "Configure APIs"
         case models = "Manage Models"
-        case updates = "Updates"
+        case about = "About"
         
         var id: String { rawValue }
         
@@ -349,7 +356,7 @@ struct ContentView: View {
             case .tools: return "gearshape.2.fill"
             case .apiKeys: return "key.fill"
             case .models: return "cpu.fill"
-            case .updates: return "arrow.triangle.2.circlepath.circle.fill"
+            case .about: return "info.circle.fill"
             }
         }
         
@@ -361,7 +368,7 @@ struct ContentView: View {
             case .tools: return .orange
             case .apiKeys: return .green
             case .models: return .red
-            case .updates: return .cyan
+            case .about: return .cyan
             }
         }
     }
@@ -377,6 +384,10 @@ struct ContentView: View {
     @State private var showTerminalPanel: Bool = false
     @State private var terminalPanelHeight: CGFloat = 220
     @State private var terminalCommand: String = ""
+    
+    // Scroll lock: when the user manually scrolls up during generation,
+    // stop auto-scrolling until generation finishes or they scroll back down.
+    @State private var userHasScrolledUp: Bool = false
 
     // Presets and layout namespace
     @State private var showSavePresetPopover: Bool = false
@@ -748,8 +759,18 @@ struct ContentView: View {
                     }
                 }
                 .onChange(of: manager.activeThreadId) { _, _ in
+                    if editingUserMessageId != nil {
+                        editingUserMessageId = nil
+                        inputText = ""
+                        attachedImageBase64 = nil
+                        attachedFiles = []
+                    }
+                    manager.toolRequestManager.clearActiveRequest()
                     rightSidebarSources = []
                     rightSidebarSourceMessageID = nil
+                    quotedFollowUpText = nil
+                    activeSelectedText = nil
+                    selectionCenterInLocal = nil
                     if rightSidebarTab == .sources {
                         rightSidebarTab = .configure
                         showRightSidebar = false
@@ -898,15 +919,27 @@ struct ContentView: View {
                         }
                     }
                     .onChange(of: thread.messages.count) {
+                        userHasScrolledUp = false
                         scrollToBottom(proxy: proxy, thread: thread, animated: true)
                     }
                     .onChange(of: thread.messages.last?.text.count ?? 0) {
-                        if manager.isGenerating {
+                        if manager.isGenerating && !userHasScrolledUp {
                             scrollToBottom(proxy: proxy, thread: thread, animated: false)
                         }
                     }
+                    .onChange(of: manager.isGenerating) {
+                        if !manager.isGenerating {
+                            userHasScrolledUp = false
+                        }
+                    }
                     .onAppear {
+                        userHasScrolledUp = false
                         scrollToBottom(proxy: proxy, thread: thread, animated: false)
+                    }
+                    .onScrollPhaseChange { _, newPhase in
+                        if manager.isGenerating && newPhase == .interacting {
+                            userHasScrolledUp = true
+                        }
                     }
                 }
                 // Floating Card (Tool Request Card)
@@ -919,6 +952,49 @@ struct ContentView: View {
                             insertion: .move(edge: .bottom).combined(with: .opacity),
                             removal: .move(edge: .bottom).combined(with: .opacity)
                         ))
+                }
+
+                // Text selection tracker for contextual follow-up
+                TextSelectionFollowUpTracker(
+                    selectedText: $activeSelectedText,
+                    selectionCenterInLocal: $selectionCenterInLocal
+                )
+                .allowsHitTesting(false)
+                
+                // Floating "Ask follow up" popup
+                if let text = activeSelectedText, !text.isEmpty, let position = selectionCenterInLocal {
+                    Button {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                            quotedFollowUpText = text
+                            activeSelectedText = nil
+                            selectionCenterInLocal = nil
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            isInputFocused = true
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrowshape.turn.up.left.fill")
+                                .font(.system(size: 10.5, weight: .semibold))
+                            Text("Ask follow up")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(Color(nsColor: .windowBackgroundColor))
+                                .shadow(color: .black.opacity(0.28), radius: 8, x: 0, y: 3)
+                        )
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.primary.opacity(0.18), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .position(position)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    .zIndex(100)
                 }
             }
             // The transcript owns all remaining vertical space. Without this,
@@ -1009,6 +1085,7 @@ struct ContentView: View {
             
             // Developer-only context diagnostics live outside the composer.
             if thread.showSystemMessages {
+                let metrics = manager.getContextUsageMetrics(for: thread)
                 HStack {
                     Spacer()
 
@@ -1016,14 +1093,14 @@ struct ContentView: View {
                         Image(systemName: "cpu")
                             .font(.system(size: 10, weight: .bold))
                         
-                        Text(manager.getContextUsageString(for: thread))
+                        Text(metrics.string)
                             .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                         
                         ZStack {
                             Circle()
                                 .stroke(accentColorValue.opacity(0.25), lineWidth: 2)
                             Circle()
-                                .trim(from: 0, to: manager.getContextUsageFraction(for: thread))
+                                .trim(from: 0, to: metrics.fraction)
                                 .stroke(
                                     accentColorValue,
                                     style: StrokeStyle(lineWidth: 2, lineCap: .round)
@@ -1081,6 +1158,7 @@ struct ContentView: View {
                             editingUserMessageId = nil
                             inputText = ""
                             attachedImageBase64 = nil
+                            attachedFiles = []
                         } label: {
                             Image(systemName: "xmark")
                                 .font(.system(size: 10, weight: .bold))
@@ -1092,37 +1170,133 @@ struct ContentView: View {
                     .padding(.horizontal, 14)
                     .padding(.top, 8)
                 }
-
-                if let imageBase64 = attachedImageBase64,
-                   let nsImage = nsImageFromBase64(imageBase64) {
-                    HStack {
-                        ZStack(alignment: .topTrailing) {
-                            Image(nsImage: nsImage)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(width: 56, height: 56)
-                                .cornerRadius(8)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
-                                )
-                            
-                            Button(action: {
-                                withAnimation {
-                                    attachedImageBase64 = nil
-                                }
-                            }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 14))
-                                    .foregroundStyle(.gray, Color(NSColor.windowBackgroundColor))
+                
+                if let quote = quotedFollowUpText {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(.secondary)
+                        
+                        Text("\"\"\"\(quote)\"\"\"")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        
+                        Spacer(minLength: 4)
+                        
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                quotedFollowUpText = nil
                             }
-                            .buttonStyle(.plain)
-                            .offset(x: 6, y: -6)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.secondary)
+                                .padding(4)
+                                .contentShape(Rectangle())
                         }
-                        Spacer()
+                        .buttonStyle(.plain)
+                        .help("Remove quoted follow-up")
                     }
-                    .padding(.top, 10)
-                    .padding(.leading, 14)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Color.secondary.opacity(0.16), lineWidth: 0.5)
+                    )
+                    .padding(.horizontal, 14)
+                    .padding(.top, 8)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+
+                if attachedImageBase64 != nil || !attachedFiles.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            if let imageBase64 = attachedImageBase64,
+                               let nsImage = nsImageFromBase64(imageBase64) {
+                                ZStack(alignment: .topTrailing) {
+                                    Image(nsImage: nsImage)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: 48, height: 48)
+                                        .cornerRadius(8)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 8)
+                                                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                                        )
+                                    
+                                    Button(action: {
+                                        withAnimation {
+                                            attachedImageBase64 = nil
+                                        }
+                                    }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(.gray, Color(NSColor.windowBackgroundColor))
+                                    }
+                                    .buttonStyle(.plain)
+                                    .offset(x: 5, y: -5)
+                                }
+                            }
+                            
+                            ForEach(attachedFiles) { file in
+                                HStack(spacing: 7) {
+                                    Button {
+                                        previewingFile = file
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: file.isPDF ? "doc.richtext.fill" : "doc.text.fill")
+                                                .font(.system(size: 15, weight: .semibold))
+                                                .foregroundStyle(file.isPDF ? Color.red : Color.blue)
+                                            VStack(alignment: .leading, spacing: 1) {
+                                                Text(file.name)
+                                                    .font(.system(size: 11, weight: .semibold))
+                                                    .lineLimit(1)
+                                                HStack(spacing: 3) {
+                                                    if let pageCount = file.pageCount {
+                                                        Text("\(pageCount) pages •")
+                                                    }
+                                                    Text(ByteCountFormatter.string(fromByteCount: file.fileSize, countStyle: .file))
+                                                }
+                                                .font(.system(size: 9))
+                                                .foregroundStyle(.secondary)
+                                            }
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Click to preview file contents")
+                                    
+                                    Button(action: {
+                                        withAnimation {
+                                            attachedFiles.removeAll(where: { $0.id == file.id })
+                                            if previewingFile?.id == file.id {
+                                                previewingFile = nil
+                                            }
+                                        }
+                                    }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.secondary.opacity(0.7))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 5)
+                                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(Color.secondary.opacity(0.16), lineWidth: 0.5))
+                                .popover(item: Binding(
+                                    get: { previewingFile?.id == file.id ? previewingFile : nil },
+                                    set: { if $0 == nil { previewingFile = nil } }
+                                ), arrowEdge: .top) { fileItem in
+                                    AttachedFilePreviewPopover(file: fileItem)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.top, 8)
+                    }
                     .transition(.opacity.combined(with: .scale))
                 }
                 
@@ -1133,9 +1307,12 @@ struct ContentView: View {
                         return "Provide information in the card above..."
                     } else if manager.isGenerating {
                         return "Type your next message while this response finishes..."
+                    } else if quotedFollowUpText != nil {
+                        return "Ask follow up..."
                     } else {
                         switch thread.provider {
                         case .lmStudio: return "Message LM Studio Server..."
+                        case .mlx: return "Message Apple MLX (Metal)..."
                         case .gemini: return "Message Gemini API..."
                         case .openRouter: return "Message OpenRouter API..."
                         case .openAI: return "Message ChatGPT..."
@@ -1160,16 +1337,24 @@ struct ContentView: View {
                         .padding(.top, 12)
                     
                     HStack(spacing: 8) {
-                        Button(action: selectImage) {
+                        Menu {
+                            Button(action: selectImage) {
+                                Label("Image", systemImage: "photo")
+                            }
+                            Button(action: selectFiles) {
+                                Label("Files", systemImage: "doc")
+                            }
+                        } label: {
                             Image(systemName: "plus")
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.plain)
-                        .help("Attach Image")
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .help("Attach Image or Files (PDF, documents, code)")
                         .padding(.leading, 10)
 
-                        if thread.provider == .lmStudio {
+                        if thread.provider == .lmStudio || thread.provider == .mlx {
                             Button {
                                 lmStudioThinkingEnabled.toggle()
                             } label: {
@@ -1189,15 +1374,6 @@ struct ContentView: View {
                                                 : Color.primary.opacity(0.055)
                                         )
                                 )
-                                .overlay {
-                                    Capsule()
-                                        .stroke(
-                                            lmStudioThinkingEnabled
-                                                ? accentColorValue.opacity(0.34)
-                                                : Color.primary.opacity(0.12),
-                                            lineWidth: 0.75
-                                        )
-                                }
                                 .foregroundStyle(lmStudioThinkingEnabled ? accentColorValue : Color.secondary)
                             }
                             .buttonStyle(.plain)
@@ -1205,7 +1381,7 @@ struct ContentView: View {
                             .help(
                                 lmStudioThinkingEnabled
                                     ? "Thinking is on for LM Studio. Effort controls its intensity."
-                                    : "Thinking is off for LM Studio. Responses use direct-answer mode."
+                                    : "Turn on reasoning for supported LM Studio models."
                             )
                             .accessibilityLabel("LM Studio thinking")
                             .accessibilityValue(lmStudioThinkingEnabled ? "On" : "Off")
@@ -1232,15 +1408,6 @@ struct ContentView: View {
                                             : Color.primary.opacity(0.055)
                                     )
                             )
-                            .overlay {
-                                Capsule()
-                                    .stroke(
-                                        forceWebSearchNextMessage
-                                            ? accentColorValue.opacity(0.34)
-                                            : Color.primary.opacity(0.12),
-                                        lineWidth: 0.75
-                                    )
-                            }
                             .foregroundStyle(forceWebSearchNextMessage ? accentColorValue : Color.secondary)
                         }
                         .buttonStyle(.plain)
@@ -1310,10 +1477,14 @@ struct ContentView: View {
                             Button(action: sendCurrentMessage) {
                                 Image(systemName: "arrow.up.circle.fill")
                                     .font(.system(size: 26))
-                                    .foregroundStyle(inputText.isEmpty && attachedImageBase64 == nil || isToolActive ? Color.secondary : (thread.provider == .lmStudio ? Color.blue : Color.purple))
+                                    .foregroundStyle(
+                                        (inputText.isEmpty && attachedImageBase64 == nil && attachedFiles.isEmpty && quotedFollowUpText == nil) || isToolActive
+                                            ? Color.secondary
+                                            : (thread.provider == .lmStudio || thread.provider == .mlx ? Color.blue : Color.purple)
+                                    )
                             }
                             .buttonStyle(.plain)
-                            .disabled((inputText.isEmpty && attachedImageBase64 == nil) || isToolActive || manager.isGenerating)
+                            .disabled((inputText.isEmpty && attachedImageBase64 == nil && attachedFiles.isEmpty && quotedFollowUpText == nil) || isToolActive || manager.isGenerating)
                             .padding(.trailing, 8)
                         }
                     }
@@ -1336,10 +1507,16 @@ struct ContentView: View {
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                            .stroke(
+                                isComposerDropTargeted ? accentColorValue : Color.primary.opacity(0.12),
+                                lineWidth: isComposerDropTargeted ? 1.75 : 1
+                            )
                     )
-                    .shadow(color: Color.black.opacity(0.12), radius: 10, x: 0, y: 4)
+                    .shadow(color: isComposerDropTargeted ? accentColorValue.opacity(0.25) : Color.black.opacity(0.12), radius: isComposerDropTargeted ? 12 : 10, x: 0, y: 4)
             )
+            .onDrop(of: [.fileURL, .image], isTargeted: $isComposerDropTargeted) { providers in
+                handleComposerDrop(providers: providers)
+            }
             .padding(.horizontal, 16)
             .padding(.bottom, showTerminalPanel ? 8 : 16)
             
@@ -1664,6 +1841,7 @@ struct ContentView: View {
                                     ) {
                                         inputText = message.text
                                         attachedImageBase64 = message.attachedImageBase64
+                                        attachedFiles = message.attachedFiles ?? []
                                         editingUserMessageId = message.id
                                         isInputFocused = true
                                     }
@@ -1672,35 +1850,55 @@ struct ContentView: View {
                             }
 
                             Group {
-                                if let imageBase64 = message.attachedImageBase64,
-                                   let nsImage = nsImageFromBase64(imageBase64) {
-                                    VStack(alignment: .leading, spacing: 8) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    if let files = message.attachedFiles, !files.isEmpty {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            ForEach(files) { file in
+                                                HStack(spacing: 7) {
+                                                    Image(systemName: file.isPDF ? "doc.richtext.fill" : "doc.text.fill")
+                                                        .font(.system(size: 14, weight: .semibold))
+                                                        .foregroundStyle(file.isPDF ? Color.red : Color.white)
+                                                    VStack(alignment: .leading, spacing: 1) {
+                                                        Text(file.name)
+                                                            .font(.system(size: 11.5, weight: .semibold))
+                                                            .lineLimit(1)
+                                                        HStack(spacing: 3) {
+                                                            if let pageCount = file.pageCount {
+                                                                Text("\(pageCount) pages •")
+                                                            }
+                                                            Text(ByteCountFormatter.string(fromByteCount: file.fileSize, countStyle: .file))
+                                                        }
+                                                        .font(.system(size: 9.5))
+                                                        .opacity(0.85)
+                                                    }
+                                                }
+                                                .padding(.horizontal, 9)
+                                                .padding(.vertical, 5)
+                                                .background(Color.black.opacity(0.2), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                            }
+                                        }
+                                    }
+
+                                    if let imageBase64 = message.attachedImageBase64,
+                                       let nsImage = nsImageFromBase64(imageBase64) {
                                         Image(nsImage: nsImage)
                                             .resizable()
                                             .aspectRatio(contentMode: .fit)
                                             .frame(maxWidth: 240, maxHeight: 180)
                                             .cornerRadius(8)
-                                        if !message.text.isEmpty {
-                                            Text(message.text)
-                                                .font(chatAppFont(size: 13.5))
-                                                .lineSpacing(3.5)
-                                        }
                                     }
-                                    .padding(.horizontal, 18)
-                                    .padding(.vertical, 12)
-                                    .background(useGradientBubbles ? AnyView(accentGradientValue) : AnyView(accentColorValue))
-                                    .foregroundStyle(.white)
-                                    .clipShape(BubbleShape(isUser: true))
-                                } else {
-                                    Text(message.text)
-                                        .font(chatAppFont(size: 13.5))
-                                        .lineSpacing(3.5)
-                                        .padding(.horizontal, 18)
-                                        .padding(.vertical, 12)
-                                        .background(useGradientBubbles ? AnyView(accentGradientValue) : AnyView(accentColorValue))
-                                        .foregroundStyle(.white)
-                                        .clipShape(BubbleShape(isUser: true))
+
+                                    if !message.text.isEmpty {
+                                        Text(message.text)
+                                            .font(chatAppFont(size: 13.5))
+                                            .lineSpacing(3.5)
+                                    }
                                 }
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .background(useGradientBubbles ? AnyView(accentGradientValue) : AnyView(accentColorValue))
+                                .foregroundStyle(.white)
+                                .clipShape(BubbleShape(isUser: true))
                             }
                             .textSelection(.enabled)
                         }
@@ -1730,6 +1928,14 @@ struct ContentView: View {
                                         .font(.system(size: 11))
                                         .foregroundStyle(.teal)
                                     Text(thread.lmStudioModelId ?? "LM Studio Model")
+                                        .font(.caption2)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(.secondary)
+                                } else if thread.provider == .mlx {
+                                    Image(systemName: "cpu")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.indigo)
+                                    Text(thread.mlxModelId ?? "Apple MLX Model")
                                         .font(.caption2)
                                         .fontWeight(.bold)
                                         .foregroundStyle(.secondary)
@@ -1763,24 +1969,29 @@ struct ContentView: View {
                         
                         let isLast = message.id == thread.messages.last?.id
                         let isCurrentlyStreaming = isLast && manager.isGenerating
-                        let isThinkingEnabled = thread.provider == .lmStudio
+                        let isThinkingEnabled = (thread.provider == .lmStudio || thread.provider == .mlx)
                             ? lmStudioThinkingEnabled
                             : (AIEffortLevel(rawValue: aiEffortLevel) ?? .medium) != .low
                         let reasoningParsed = message.parsedReasoning
-                        // Thought output was previously tied to Effort/Thinking mode.
-                        // Based on user request, it is now exclusively tied to
-                        // Developer Mode. Keep it visible as a collapsible row
-                        // only when Developer Mode is enabled.
-                        let reasoningText = thread.showSystemMessages ? reasoningParsed.reasoningText : nil
-                        let mainContentText = reasoningParsed.mainText
+                        let showThoughts = thread.showSystemMessages || isThinkingEnabled
+                        let hasDistinctMainText = !reasoningParsed.mainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        let reasoningText = showThoughts ? reasoningParsed.reasoningText : nil
+                        let mainContentText = hasDistinctMainText
+                            ? reasoningParsed.mainText
+                            : (showThoughts ? "" : (reasoningParsed.reasoningText ?? ""))
                         let responseSources = searchLinksForTurn(endingAt: message, in: thread)
                         // Reasoning extraction intentionally strips native tool-call
                         // transport from visible prose. Parse the original message so
                         // the corresponding activity card is still rendered.
                         let parsedToolRequest = ToolRequestParser.parse(text: message.text)
                         
+                        // Only show JSON streaming spinner when the message
+                        // starts with a JSON object or fenced code block, not
+                        // when prose merely mentions braces or backticks.
+                        let trimmedForJSON = mainContentText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let looksLikeJSONStart = trimmedForJSON.hasPrefix("{") || trimmedForJSON.hasPrefix("```json") || trimmedForJSON.hasPrefix("```{")
                         let isStreamingJSONPart = isCurrentlyStreaming &&
-                            (mainContentText.contains("{") || mainContentText.contains("```")) &&
+                            looksLikeJSONStart &&
                             ToolRequestParser.parse(text: mainContentText) == nil
                         
                         let trimmedText = mainContentText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1833,15 +2044,17 @@ struct ContentView: View {
                             // Markdown above or below that card.
                             let intro = message.introText
                             let conclusion = message.conclusionText
-                            let isCompactHeader = toolRequest?.type == "advanced_memory" || toolRequest?.type == "learning" || toolRequest?.type == "file_system"
+                            let isCompactHeader = toolRequest?.type == "advanced_memory" || toolRequest?.type == "learning" || toolRequest?.type == "file_system" || toolRequest?.type == "apple_notes"
                             VStack(alignment: .leading, spacing: isCompactHeader ? 4 : 10) {
                                 if let reasoning = reasoningText, !reasoning.isEmpty {
                                     ReasoningThoughtView(
                                         reasoningText: reasoning,
                                         isGenerating: isCurrentlyStreaming,
-                                        isComplete: reasoningParsed.isThinkingComplete,
-                                        showsCopyAction: thread.showSystemMessages
+                                        isComplete: !isCurrentlyStreaming || reasoningParsed.isThinkingComplete,
+                                        showsCopyAction: true,
+                                        defaultExpanded: thread.showSystemMessages || (isCurrentlyStreaming && !reasoningParsed.isThinkingComplete) || !hasDistinctMainText
                                     )
+                                    .padding(.bottom, 4)
                                 }
                                 
                                 if !intro.isEmpty {
@@ -1874,6 +2087,16 @@ struct ContentView: View {
                                         .padding(.bottom, 6)
                                     } else if message.isStreamingFileSystemJSON {
                                         TerminalExecutingView()
+                                    } else if message.isStreamingAppleNotesJSON {
+                                        HStack(spacing: 7) {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                            CrystalizingText(
+                                                label: "Accessing Apple Notes…",
+                                                font: .system(size: 13, weight: .medium)
+                                            )
+                                        }
+                                        .padding(.bottom, 6)
                                     } else if message.isStreamingTaskJSON {
                                         if isFirstTaskToolRequestInTurn(message, in: thread) {
                                             TasksExecutingView()
@@ -1949,16 +2172,20 @@ struct ContentView: View {
                                                         VStack(alignment: .leading, spacing: 4) {
                                                             HStack(spacing: 5) {
                                                                 if request.type == "advanced_memory" || request.type == "learning" || request.displayTitle == "updated memory" {
-                                                                Image(systemName: "brain.head.profile")
-                                                                    .font(.system(size: 11))
-                                                                    .foregroundStyle(.secondary)
+                                                                    Image(systemName: "brain.head.profile")
+                                                                        .font(.system(size: 11))
+                                                                        .foregroundStyle(.secondary)
+                                                                } else if request.type == "apple_notes" {
+                                                                    Image(systemName: "note.text")
+                                                                        .font(.system(size: 11))
+                                                                        .foregroundStyle(.yellow)
                                                                 }
                                                                 Text(request.displayTitle)
                                                                     .font(.caption)
                                                                     .fontWeight((request.type == "advanced_memory" || request.type == "learning") ? .medium : .bold)
                                                                     .foregroundStyle((request.type == "advanced_memory" || request.type == "learning") ? .secondary : .primary)
                                                             }
-                                                            if request.type != "advanced_memory" && request.type != "learning" && !request.description.isEmpty {
+                                                            if request.type != "advanced_memory" && request.type != "learning" && request.type != "apple_notes" && !request.description.isEmpty {
                                                                 Text(request.description)
                                                                     .font(.caption)
                                                                     .foregroundStyle(.secondary)
@@ -2004,7 +2231,8 @@ struct ContentView: View {
                                         if thread.showSystemMessages, let start = message.generationStartTime {
                                             let end = message.generationEndTime ?? (isCurrentlyStreaming ? Date() : start)
                                             let duration = end.timeIntervalSince(start)
-                                            let estimatedTokens = mainContentText.count / 4
+                                            let totalChars = message.text == "..." ? 0 : message.text.count
+                                            let estimatedTokens = max(1, totalChars / 4)
                                             let tokensPerSecond = duration > 0 ? Double(estimatedTokens) / duration : 0.0
                                             HStack(spacing: 5) {
                                                 Image(systemName: "timer")
@@ -2232,16 +2460,7 @@ struct ContentView: View {
     }
 
     private func selectedModelDisplayName(for thread: ChatThread) -> String {
-        switch thread.provider {
-        case .gemini:
-            return formatModelDisplayName(thread.geminiModelId ?? "gemini-2.5-flash")
-        case .openRouter:
-            return formatModelDisplayName(thread.openRouterModelId ?? "google/gemini-2.0-flash-001")
-        case .openAI:
-            return formatModelDisplayName(thread.openAIModelId ?? "gpt-4o")
-        case .lmStudio:
-            return formatModelDisplayName(thread.lmStudioModelId ?? "LM Studio")
-        }
+        return formatModelDisplayName(thread.activeModelName)
     }
 
     private func providerDisplayName(for thread: ChatThread) -> String {
@@ -2254,6 +2473,8 @@ struct ContentView: View {
             return "OpenAI"
         case .lmStudio:
             return "LM Studio"
+        case .mlx:
+            return "Apple MLX"
         }
     }
 
@@ -2267,6 +2488,8 @@ struct ContentView: View {
             return "brain.head.profile"
         case .lmStudio:
             return "server.rack"
+        case .mlx:
+            return "cpu"
         }
     }
 
@@ -2299,11 +2522,140 @@ struct ContentView: View {
                 .pickerStyle(.menu)
             }
             
+            if thread.provider == .mlx {
+                let selectedModelId = thread.mlxModelId ?? manager.mlxScanner.models.first?.id ?? ""
+                let selectedLocalModel = manager.mlxScanner.models.first(where: { $0.id == selectedModelId })
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Scanned Local Models")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        
+                        if let model = selectedLocalModel, model.isMLXNative {
+                            let isInjected = InProcessMLXEngine.shared.isModelLoaded(path: model.path)
+                            let isInjecting = InProcessMLXEngine.shared.isInjecting
+                            
+                            Button(action: {
+                                Task {
+                                    await InProcessMLXEngine.shared.inject(model: model)
+                                }
+                            }) {
+                                HStack(spacing: 3.5) {
+                                    if isInjecting {
+                                        ProgressView()
+                                            .controlSize(.mini)
+                                        Text("Injecting...")
+                                    } else if isInjected {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(.green)
+                                        Text("Ready in Metal RAM")
+                                            .foregroundStyle(.green)
+                                    } else {
+                                        Image(systemName: "syringe.fill")
+                                        Text("Inject")
+                                    }
+                                }
+                                .font(.system(size: 10, weight: .semibold))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(isInjecting)
+                            .help("Preload model directly into Apple Silicon Metal memory for zero latency")
+                        }
+                        
+                        Button(action: { manager.mlxScanner.scanModels() }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: manager.mlxScanner.isScanning ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
+                                    .rotationEffect(Angle(degrees: manager.mlxScanner.isScanning ? 360 : 0))
+                                    .animation(manager.mlxScanner.isScanning ? Animation.linear(duration: 1).repeatForever(autoreverses: false) : .default, value: manager.mlxScanner.isScanning)
+                                Text(manager.mlxScanner.isScanning ? "Scanning..." : "Rescan")
+                            }
+                            .font(.system(size: 10, weight: .medium))
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(manager.mlxScanner.isScanning)
+                    }
+                    
+                    if !manager.mlxScanner.models.isEmpty {
+                        Picker("Model", selection: Binding(
+                            get: { thread.mlxModelId ?? manager.mlxScanner.models.first?.id ?? "" },
+                            set: { manager.updateMLXModel(id: thread.id, modelId: $0.isEmpty ? nil : $0) }
+                        )) {
+                            ForEach(manager.mlxScanner.models) { model in
+                                let badge = model.isMLXNative ? "⚡ [MLX \(model.quantization)] " : "📦 [\(model.quantization)] "
+                                Text("\(badge)\(model.displayName) (\(model.formattedSize))").tag(model.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        
+                        if let model = selectedLocalModel, InProcessMLXEngine.shared.isModelLoaded(path: model.path) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "bolt.shield.fill")
+                                    .foregroundStyle(.green)
+                                Text("Ready in Metal Unified Memory (Direct In-Process)")
+                                    .font(.system(size: 9.5, weight: .medium))
+                                    .foregroundStyle(.green)
+                            }
+                        } else {
+                            Text("Scanned from ~/.lmstudio/models and cache")
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("No local models found in ~/.lmstudio/models.")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                            Text("Download MLX or GGUF models via LM Studio or place them in ~/.lmstudio/models.")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            
             if thread.provider == .lmStudio {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Selected Model")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Selected Model")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        if let selectedModel = thread.lmStudioModelId ?? manager.lmStudioAvailableModels.first, !selectedModel.isEmpty {
+                            let isInjecting = manager.injectingLMStudioModelId == selectedModel
+                            let isInjected = manager.injectedLMStudioModels.contains(selectedModel)
+                            
+                            Button(action: {
+                                Task {
+                                    await manager.injectLMStudioModel(modelId: selectedModel)
+                                }
+                            }) {
+                                HStack(spacing: 3.5) {
+                                    if isInjecting {
+                                        ProgressView()
+                                            .controlSize(.mini)
+                                        Text("Injecting...")
+                                    } else if isInjected {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(.green)
+                                        Text("Ready in Memory")
+                                            .foregroundStyle(.green)
+                                    } else {
+                                        Image(systemName: "syringe.fill")
+                                        Text("Inject")
+                                    }
+                                }
+                                .font(.system(size: 10, weight: .semibold))
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(isInjecting)
+                            .help("Inject model into RAM / Metal memory in LM Studio for instant zero-latency responses")
+                        }
+                    }
                     
                     if !manager.lmStudioAvailableModels.isEmpty {
                         Picker("Model", selection: Binding(
@@ -2317,6 +2669,12 @@ struct ContentView: View {
                         }
                         .labelsHidden()
                         .pickerStyle(.menu)
+                        
+                        if let status = manager.injectStatusMessage {
+                            Text(status)
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(status.contains("Ready") || status.contains("injected") ? .green : .secondary)
+                        }
                     } else {
                         Text("No models detected. Ensure LM Studio server is started.")
                             .font(.caption)
@@ -2694,11 +3052,21 @@ struct ContentView: View {
         let message = rightSidebarSourceMessageID.flatMap { selectedID in
             thread.messages.first(where: { $0.id == selectedID })
         }
-        // The sidebar may be opened while the first search round is complete
-        // and a refinement round is still running. Never render the snapshot
-        // captured at click time: recompute from the observable transcript so
-        // later tool responses appear immediately.
+        let liveGroups: [SearchQueryGroup] = {
+            guard let message else { return [] }
+            return searchQueryGroupsForSearchActivity(startingAt: message, in: thread)
+        }()
         let liveSources: [(title: String, url: String)] = {
+            if !liveGroups.isEmpty {
+                var all: [(title: String, url: String)] = []
+                var seen = Set<String>()
+                for g in liveGroups {
+                    for s in g.sources where seen.insert(s.url).inserted {
+                        all.append(s)
+                    }
+                }
+                if !all.isEmpty { return all }
+            }
             guard let message else { return rightSidebarSources }
             let isSearchActivity = message.isStreamingSearchJSON ||
                 ToolRequestParser.parse(text: message.text)?.type == "internet_use"
@@ -2707,14 +3075,7 @@ struct ContentView: View {
                 : searchLinksForTurn(endingAt: message, in: thread)
             return refreshed.isEmpty ? rightSidebarSources : refreshed
         }()
-        let liveQueries: [String] = {
-            guard let message else { return [] }
-            return searchQueriesForSearchActivity(startingAt: message, in: thread)
-        }()
-        let duration = message.flatMap { message -> TimeInterval? in
-            guard let start = message.generationStartTime else { return nil }
-            return (message.generationEndTime ?? Date()).timeIntervalSince(start)
-        }
+        let duration = durationForSearchActivity(startingAt: message, in: thread)
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -2745,7 +3106,8 @@ struct ContentView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
-                    if let ultraRun {
+                    if let ultraRun,
+                       ultraRun.items.contains(where: { $0.title != "Plan the requested work" && $0.title != "Verify and present the complete result" }) {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Label("Work progress", systemImage: "sparkles")
@@ -2780,46 +3142,78 @@ struct ContentView: View {
                         }
                     }
 
-                    if !liveSources.isEmpty {
+                    if !liveSources.isEmpty || !liveGroups.isEmpty {
                         Text("Thinking")
                             .font(.system(size: 20, weight: .medium))
 
-                        HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: "globe")
-                                .font(.system(size: 14))
-                                .foregroundStyle(.teal)
-                                .frame(width: 20, height: 22)
+                        if !liveGroups.isEmpty {
+                            VStack(alignment: .leading, spacing: 20) {
+                                ForEach(Array(liveGroups.enumerated()), id: \.offset) { index, group in
+                                    HStack(alignment: .top, spacing: 12) {
+                                        Image(systemName: "globe")
+                                            .font(.system(size: 14))
+                                            .foregroundStyle(.teal)
+                                            .frame(width: 20, height: 22)
 
-                            VStack(alignment: .leading, spacing: 10) {
-                                HStack(spacing: 6) {
-                                    Text("\(manager.isGenerating ? "Searching" : "Searched") \(liveSources.count) \(liveSources.count == 1 ? "website" : "websites")")
-                                        .font(.system(size: 15, weight: .medium))
-                                    
-                                    if manager.isGenerating {
-                                        ProgressView()
-                                            .controlSize(.mini)
-                                    }
-                                }
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            HStack(spacing: 6) {
+                                                let count = group.sources.count
+                                                if count > 0 {
+                                                    Text("\(manager.isGenerating ? "Searching" : "Searched") \(count) \(count == 1 ? "website" : "websites")")
+                                                        .font(.system(size: 15, weight: .medium))
+                                                } else {
+                                                    Text(manager.isGenerating ? "Searching the web" : "Searched the web")
+                                                        .font(.system(size: 15, weight: .medium))
+                                                }
 
-                                if !liveQueries.isEmpty {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text(liveQueries.count == 1 ? "Exact query used" : "Exact queries used")
-                                            .font(.system(size: 12, weight: .semibold))
-                                            .foregroundStyle(.secondary)
+                                                if manager.isGenerating && index == liveGroups.count - 1 {
+                                                    ProgressView()
+                                                        .controlSize(.mini)
+                                                }
+                                            }
 
-                                        ForEach(Array(liveQueries.enumerated()), id: \.offset) { index, query in
-                                            SearchQueryRowView(
-                                                index: index,
-                                                totalCount: liveQueries.count,
-                                                query: query
-                                            )
+                                            VStack(alignment: .leading, spacing: 8) {
+                                                SearchQueryRowView(
+                                                    index: index,
+                                                    totalCount: liveGroups.count,
+                                                    query: group.query
+                                                )
+
+                                                if !group.sources.isEmpty {
+                                                    ActivityFlowLayout(spacing: 7) {
+                                                        ForEach(Array(group.sources.enumerated()), id: \.offset) { _, source in
+                                                            SearchSourceCapsuleView(source: source)
+                                                        }
+                                                    }
+                                                    .padding(.leading, 2)
+                                                }
+                                            }
                                         }
                                     }
                                 }
+                            }
+                        } else {
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: "globe")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(.teal)
+                                    .frame(width: 20, height: 22)
 
-                                ActivityFlowLayout(spacing: 7) {
-                                    ForEach(Array(liveSources.enumerated()), id: \.offset) { _, source in
-                                        SearchSourceCapsuleView(source: source)
+                                VStack(alignment: .leading, spacing: 14) {
+                                    HStack(spacing: 6) {
+                                        Text("\(manager.isGenerating ? "Searching" : "Searched") \(liveSources.count) \(liveSources.count == 1 ? "website" : "websites")")
+                                            .font(.system(size: 15, weight: .medium))
+                                        
+                                        if manager.isGenerating {
+                                            ProgressView()
+                                                .controlSize(.mini)
+                                        }
+                                    }
+
+                                    ActivityFlowLayout(spacing: 7) {
+                                        ForEach(Array(liveSources.enumerated()), id: \.offset) { _, source in
+                                            SearchSourceCapsuleView(source: source)
+                                        }
                                     }
                                 }
                             }
@@ -2827,15 +3221,28 @@ struct ContentView: View {
                     }
 
                     HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "checkmark.circle")
-                            .font(.system(size: 14))
-                            .frame(width: 20, height: 22)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(duration.map { "Worked for \(Int($0.rounded()))s" } ?? "Worked")
-                                .font(.system(size: 15, weight: .medium))
-                            Text("Done")
+                        if manager.isGenerating {
+                            ProgressView()
+                                .controlSize(.small)
+                                .frame(width: 20, height: 22)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(duration.map { "Working for \(Int($0.rounded()))s" } ?? "Working")
+                                    .font(.system(size: 15, weight: .medium))
+                                Text("In progress")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Image(systemName: "checkmark.circle")
                                 .font(.system(size: 14))
-                                .foregroundStyle(.secondary)
+                                .frame(width: 20, height: 22)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(duration.map { "Worked for \(Int($0.rounded()))s" } ?? "Worked")
+                                    .font(.system(size: 15, weight: .medium))
+                                Text("Done")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
@@ -2843,6 +3250,67 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func durationForSearchActivity(startingAt message: ChatMessage?, in thread: ChatThread) -> TimeInterval? {
+        let targetMessage = message ?? thread.messages.last(where: { $0.role == .assistant })
+        guard let targetMessage else { return nil }
+
+        let targetIndex = thread.messages.firstIndex(where: { $0.id == targetMessage.id }) ?? (thread.messages.count - 1)
+        
+        var turnStartIndex = 0
+        var cursor = targetIndex - 1
+        while cursor >= 0 {
+            let candidate = thread.messages[cursor]
+            if candidate.role == .user && !candidate.isToolResponse {
+                turnStartIndex = cursor + 1
+                break
+            }
+            cursor -= 1
+        }
+        
+        var turnEndIndex = thread.messages.count - 1
+        for i in turnStartIndex..<thread.messages.count {
+            let candidate = thread.messages[i]
+            if i > turnStartIndex && candidate.role == .user && !candidate.isToolResponse {
+                turnEndIndex = i - 1
+                break
+            }
+        }
+        
+        let turnMessages = Array(thread.messages[turnStartIndex...turnEndIndex])
+        
+        // The earliest start time in this turn
+        let turnStart = turnMessages.compactMap(\.generationStartTime).first
+            ?? targetMessage.generationStartTime
+            ?? turnMessages.first(where: { $0.role == .assistant })?.timestamp
+            ?? turnMessages.first?.timestamp
+            
+        guard let turnStart else { return nil }
+        
+        if manager.isGenerating {
+            return max(0, Date().timeIntervalSince(turnStart))
+        }
+        
+        // When generation is finished, find the latest end time in the turn
+        if let lastEndTime = turnMessages.compactMap(\.generationEndTime).last {
+            return max(0, lastEndTime.timeIntervalSince(turnStart))
+        }
+        
+        if let end = targetMessage.generationEndTime {
+            return max(0, end.timeIntervalSince(turnStart))
+        }
+        
+        if let finalAssistant = turnMessages.last(where: { $0.role == .assistant }) {
+            if let end = finalAssistant.generationEndTime {
+                return max(0, end.timeIntervalSince(turnStart))
+            }
+            if finalAssistant.timestamp > turnStart {
+                return max(0, finalAssistant.timestamp.timeIntervalSince(turnStart))
+            }
+        }
+        
+        return 0
     }
 
     private func ultraTaskIcon(_ status: UltraTaskStatus) -> String {
@@ -3080,12 +3548,27 @@ struct ContentView: View {
         guard let threadId = manager.activeThreadId else { return }
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         let image = attachedImageBase64
+        let files = attachedFiles.isEmpty ? nil : attachedFiles
         let editedMessageId = editingUserMessageId
         let forceWebSearch = forceWebSearchNextMessage
-        guard !text.isEmpty || image != nil else { return }
+        let quotedText = quotedFollowUpText
+        guard !text.isEmpty || image != nil || files != nil || quotedText != nil else { return }
+        
+        let payloadText: String = {
+            if let quote = quotedText, !quote.isEmpty {
+                if text.isEmpty {
+                    return "[Regarding: \"\(quote)\"]\n\nPlease explain or provide more details on this."
+                } else {
+                    return "[Regarding: \"\(quote)\"]\n\n\(text)"
+                }
+            }
+            return text
+        }()
         
         inputText = ""
+        quotedFollowUpText = nil
         attachedImageBase64 = nil
+        attachedFiles = []
         editingUserMessageId = nil
         forceWebSearchNextMessage = false
         isInputFocused = true
@@ -3094,14 +3577,16 @@ struct ContentView: View {
                 await manager.editAndResubmitUserMessage(
                     threadId: threadId,
                     messageId: editedMessageId,
-                    text: text,
+                    text: payloadText,
                     attachedImageBase64: image,
+                    attachedFiles: files,
                     forceWebSearch: forceWebSearch
                 )
             } else {
                 await manager.sendMessage(
-                    text: text,
+                    text: payloadText,
                     attachedImageBase64: image,
+                    attachedFiles: files,
                     forceWebSearch: forceWebSearch
                 )
             }
@@ -3129,9 +3614,155 @@ struct ContentView: View {
                 let pathExtension = url.pathExtension.lowercased()
                 let mimeType = pathExtension == "png" ? "image/png" : (pathExtension == "webp" ? "image/webp" : "image/jpeg")
                 let base64 = data.base64EncodedString()
-                self.attachedImageBase64 = "data:\(mimeType);base64,\(base64)"
+                withAnimation(.easeOut(duration: 0.16)) {
+                    self.attachedImageBase64 = "data:\(mimeType);base64,\(base64)"
+                }
             }
         }
+    }
+    
+    private func selectFiles() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [
+            .pdf,
+            .plainText,
+            .sourceCode,
+            .json,
+            .commaSeparatedText,
+            .tabSeparatedText,
+            .xml,
+            .html,
+            .data,
+            UTType(filenameExtension: "docx") ?? .data,
+            UTType(filenameExtension: "rtf") ?? .data,
+            UTType(filenameExtension: "md") ?? .plainText,
+            UTType(filenameExtension: "markdown") ?? .plainText,
+            UTType(filenameExtension: "yaml") ?? .plainText,
+            UTType(filenameExtension: "yml") ?? .plainText,
+            UTType(filenameExtension: "sh") ?? .sourceCode,
+            UTType(filenameExtension: "py") ?? .sourceCode,
+            UTType(filenameExtension: "swift") ?? .sourceCode,
+            UTType(filenameExtension: "js") ?? .sourceCode,
+            UTType(filenameExtension: "ts") ?? .sourceCode
+        ]
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        
+        if panel.runModal() == .OK {
+            for url in panel.urls {
+                processAndAttachFile(url: url)
+            }
+        }
+    }
+    
+    private func processAndAttachFile(url: URL) {
+        let filename = url.lastPathComponent
+        let ext = url.pathExtension.lowercased()
+        let fileSize: Int64 = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+        
+        // Guardrail: 30MB file size ceiling
+        if fileSize > 30 * 1024 * 1024 {
+            let limitAlert = AttachedFile(
+                name: filename,
+                fileExtension: ext,
+                fileSize: fileSize,
+                mimeType: "text/plain",
+                textContent: "[File size exceeds 30MB limit: \(ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file))]"
+            )
+            withAnimation(.easeOut(duration: 0.16)) {
+                attachedFiles.append(limitAlert)
+            }
+            return
+        }
+        
+        if ext == "pdf" {
+            if let pdfDoc = PDFDocument(url: url) {
+                var fullText = ""
+                let count = pdfDoc.pageCount
+                for i in 0..<count {
+                    if let page = pdfDoc.page(at: i), let pageStr = page.string {
+                        fullText += "--- Page \(i + 1) ---\n" + pageStr + "\n\n"
+                    }
+                }
+                // Text limit guardrail (max 400k characters)
+                if fullText.count > 400_000 {
+                    fullText = String(fullText.prefix(400_000)) + "\n\n[... Truncated remaining document text to prevent context limit overflow ...]"
+                }
+                let attached = AttachedFile(
+                    name: filename,
+                    fileExtension: ext,
+                    fileSize: fileSize,
+                    mimeType: "application/pdf",
+                    textContent: fullText.isEmpty ? "[PDF file: \(filename)]" : fullText,
+                    pageCount: count
+                )
+                withAnimation(.easeOut(duration: 0.16)) {
+                    attachedFiles.append(attached)
+                }
+            }
+        } else if ["png", "jpg", "jpeg", "webp", "gif"].contains(ext) {
+            if let data = try? Data(contentsOf: url) {
+                let mimeType = ext == "png" ? "image/png" : (ext == "webp" ? "image/webp" : "image/jpeg")
+                let base64 = data.base64EncodedString()
+                withAnimation(.easeOut(duration: 0.16)) {
+                    self.attachedImageBase64 = "data:\(mimeType);base64,\(base64)"
+                }
+            }
+        } else {
+            if var text = (try? String(contentsOf: url, encoding: .utf8)) ?? (try? String(contentsOf: url, encoding: .ascii)) {
+                if text.count > 400_000 {
+                    text = String(text.prefix(400_000)) + "\n\n[... Truncated remaining file text to prevent context limit overflow ...]"
+                }
+                let attached = AttachedFile(
+                    name: filename,
+                    fileExtension: ext,
+                    fileSize: fileSize,
+                    mimeType: "text/plain",
+                    textContent: text
+                )
+                withAnimation(.easeOut(duration: 0.16)) {
+                    attachedFiles.append(attached)
+                }
+            }
+        }
+    }
+    
+    private func handleComposerDrop(providers: [NSItemProvider]) -> Bool {
+        var handled = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    if let data = item as? Data,
+                       let url = URL(dataRepresentation: data, relativeTo: nil) {
+                        DispatchQueue.main.async {
+                            self.processAndAttachFile(url: url)
+                        }
+                    } else if let url = item as? URL {
+                        DispatchQueue.main.async {
+                            self.processAndAttachFile(url: url)
+                        }
+                    }
+                }
+                handled = true
+            } else if provider.canLoadObject(ofClass: NSImage.self) {
+                _ = provider.loadObject(ofClass: NSImage.self) { image, _ in
+                    if let nsImage = image as? NSImage,
+                       let tiff = nsImage.tiffRepresentation,
+                       let bitmap = NSBitmapImageRep(data: tiff),
+                       let pngData = bitmap.representation(using: .png, properties: [:]) {
+                        let base64 = pngData.base64EncodedString()
+                        DispatchQueue.main.async {
+                            withAnimation(.easeOut(duration: 0.16)) {
+                                self.attachedImageBase64 = "data:image/png;base64,\(base64)"
+                            }
+                        }
+                    }
+                }
+                handled = true
+            }
+        }
+        return handled
     }
     
     private func nsImageFromBase64(_ base64String: String) -> NSImage? {
@@ -3194,6 +3825,15 @@ struct ContentView: View {
             case .user:
                 roleHeading = "User"
                 var text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let files = message.attachedFiles, !files.isEmpty {
+                    let fileDescriptions = files.map { file -> String in
+                        let typeLabel = file.fileExtension.uppercased()
+                        let pageLabel = file.pageCount.map { "\($0) pages, " } ?? ""
+                        let sizeLabel = ByteCountFormatter.string(fromByteCount: file.fileSize, countStyle: .file)
+                        return "[Attached File: \(file.name) (\(typeLabel), \(pageLabel)\(sizeLabel))]"
+                    }.joined(separator: "\n")
+                    text = fileDescriptions + (text.isEmpty ? "" : "\n\n" + text)
+                }
                 if message.attachedImageBase64 != nil {
                     if text.isEmpty {
                         text = "[Attached Image]"
@@ -3267,12 +3907,15 @@ struct ContentView: View {
         if safeTitle.isEmpty {
             safeTitle = "transcript"
         }
-        let defaultFilename = "\(safeTitle).txt"
+        let defaultFilename = "\(safeTitle).md"
         
         savePanel.title = "Save Transcript"
         savePanel.prompt = "Save"
         savePanel.nameFieldStringValue = defaultFilename
-        savePanel.allowedContentTypes = [UTType.plainText]
+        savePanel.allowedContentTypes = [
+            UTType(filenameExtension: "md") ?? .plainText,
+            UTType.plainText
+        ]
         savePanel.canCreateDirectories = true
         savePanel.isExtensionHidden = false
         
@@ -3449,6 +4092,16 @@ struct ContentView: View {
                         .padding(.top, 6)
                     
                     ForEach([SettingsTab.prePrompts]) { tab in
+                        settingsTabButton(for: tab)
+                    }
+                    
+                    Text("SYSTEM")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary.opacity(0.8))
+                        .padding(.horizontal, 10)
+                        .padding(.top, 6)
+                    
+                    ForEach([SettingsTab.about]) { tab in
                         settingsTabButton(for: tab)
                     }
                 }
@@ -3735,7 +4388,7 @@ struct ContentView: View {
                                     }
                                     Spacer()
                                     Button {
-                                        withAnimation { selectedSettingsTab = .updates }
+                                        withAnimation { selectedSettingsTab = .about }
                                         Task { await UpdateManager.shared.checkForUpdates() }
                                     } label: {
                                         HStack(spacing: 5) {
@@ -3812,11 +4465,9 @@ struct ContentView: View {
                             VStack(alignment: .leading, spacing: 16) {
                                 Label("API Keys & Server Endpoints", systemImage: "key.fill")
                                     .font(.headline)
-                                    .foregroundStyle(accentColorValue)
-
-                                HStack(spacing: 10) {
+                                            HStack(spacing: 10) {
                                     ForEach(Provider.allCases) { provider in
-                                        Label(manager.health(for: provider).rawValue, systemImage: provider == .lmStudio ? "laptopcomputer" : "circle.fill")
+                                        Label(manager.health(for: provider).rawValue, systemImage: provider == .mlx ? "cpu" : (provider == .lmStudio ? "laptopcomputer" : "circle.fill"))
                                             .font(.caption2)
                                             .foregroundStyle(manager.health(for: provider) == .ready ? .green : .secondary)
                                     }
@@ -3832,6 +4483,23 @@ struct ContentView: View {
                                     }
                                     .font(.caption)
                                 }
+                                
+                                // Apple MLX Server Card
+                                apiKeyConfigCard(
+                                    title: "Apple MLX Local Server Endpoint",
+                                    icon: "cpu",
+                                    color: .indigo,
+                                    isConfigured: !manager.mlxBaseURL.isEmpty,
+                                    keyBinding: $bindableManager.mlxBaseURL,
+                                    placeholder: "http://localhost:8080/v1",
+                                    actionTitle: "Test & Scan",
+                                    onAction: {
+                                        Task {
+                                            await manager.refreshProviderHealth()
+                                            manager.mlxScanner.scanModels()
+                                        }
+                                    }
+                                )
                                 
                                 // Gemini API Key Card
                                 apiKeyConfigCard(
@@ -3883,19 +4551,38 @@ struct ContentView: View {
                                 .background(Color.primary.opacity(0.02))
                                 .cornerRadius(12)
                                 
-                                // LM Studio Server Card
-                                apiKeyConfigCard(
-                                    title: "LM Studio Local Server Endpoint",
-                                    icon: "laptopcomputer",
-                                    color: .orange,
-                                    isConfigured: !manager.lmStudioBaseURL.isEmpty,
-                                    keyBinding: $bindableManager.lmStudioBaseURL,
-                                    placeholder: "http://localhost:1234/v1",
-                                    actionTitle: "Test Connection",
-                                    onAction: {
-                                        Task { await manager.refreshLMStudioModelsExplicitly() }
+                                // LM Studio Server Card & Auto-Switch Option
+                                VStack(alignment: .leading, spacing: 12) {
+                                    apiKeyConfigCard(
+                                        title: "LM Studio Local Server Endpoint",
+                                        icon: "laptopcomputer",
+                                        color: .orange,
+                                        isConfigured: !manager.lmStudioBaseURL.isEmpty,
+                                        keyBinding: $bindableManager.lmStudioBaseURL,
+                                        placeholder: "http://localhost:1234/v1",
+                                        actionTitle: "Test Connection",
+                                        onAction: {
+                                            Task { await manager.refreshLMStudioModelsExplicitly() }
+                                        }
+                                    )
+                                    
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Auto-switch to active LM Studio model")
+                                                .font(.system(size: 12.5, weight: .medium))
+                                            Text("Automatically switch to the model currently running in LM Studio upon connection.")
+                                                .font(.system(size: 11))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Toggle("", isOn: $bindableManager.autoSwitchLMStudioModel)
+                                            .toggleStyle(.switch)
+                                            .controlSize(.small)
                                     }
-                                )
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                    .background(Color.primary.opacity(0.02), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                }
 
                                 Button("Check Existing Library Credentials") {
                                     manager.reconcileLibraryCredentialStatus()
@@ -3910,12 +4597,12 @@ struct ContentView: View {
                                         .font(.system(size: 13, weight: .semibold))
                                         .foregroundStyle(accentColorValue)
                                     Spacer()
-                                    Button(expandedModelProviders.count == 4 ? "Collapse All" : "Expand All") {
+                                    Button(expandedModelProviders.count >= 5 ? "Collapse All" : "Expand All") {
                                         withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                                            if expandedModelProviders.count == 4 {
+                                            if expandedModelProviders.count >= 5 {
                                                 expandedModelProviders.removeAll()
                                             } else {
-                                                expandedModelProviders = ["gemini", "openrouter", "openai", "lmstudio"]
+                                                expandedModelProviders = ["mlx", "gemini", "openrouter", "openai", "lmstudio"]
                                             }
                                         }
                                     }
@@ -3923,6 +4610,78 @@ struct ContentView: View {
                                     .font(.system(size: 11, weight: .medium))
                                     .foregroundStyle(.secondary)
                                 }
+                                
+                                // Apple MLX Accordion
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack {
+                                        Image(systemName: "cpu")
+                                            .font(.system(size: 15))
+                                            .foregroundStyle(.indigo)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text("Apple MLX (Native Metal)")
+                                                .font(.system(size: 13, weight: .semibold))
+                                            Text("\(manager.mlxScanner.models.count) models auto-discovered in LM Studio folder")
+                                                .font(.system(size: 10.5))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Button(action: { manager.mlxScanner.scanModels() }) {
+                                            HStack(spacing: 4) {
+                                                Image(systemName: manager.mlxScanner.isScanning ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
+                                                    .rotationEffect(Angle(degrees: manager.mlxScanner.isScanning ? 360 : 0))
+                                                    .animation(manager.mlxScanner.isScanning ? Animation.linear(duration: 1).repeatForever(autoreverses: false) : .default, value: manager.mlxScanner.isScanning)
+                                                Text(manager.mlxScanner.isScanning ? "Scanning..." : "Rescan")
+                                            }
+                                            .font(.system(size: 11, weight: .medium))
+                                        }
+                                        .buttonStyle(.bordered)
+                                        .controlSize(.small)
+                                        .disabled(manager.mlxScanner.isScanning)
+                                    }
+                                    
+                                    if !manager.mlxScanner.models.isEmpty {
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            ForEach(manager.mlxScanner.models) { model in
+                                                HStack {
+                                                    VStack(alignment: .leading, spacing: 2) {
+                                                        HStack(spacing: 6) {
+                                                            Text(model.displayName)
+                                                                .font(.system(size: 12, weight: .medium))
+                                                            Text(model.isMLXNative ? "MLX" : "GGUF")
+                                                                .font(.system(size: 9, weight: .bold))
+                                                                .padding(.horizontal, 5)
+                                                                .padding(.vertical, 1.5)
+                                                                .background(model.isMLXNative ? Color.indigo.opacity(0.15) : Color.orange.opacity(0.15))
+                                                                .foregroundStyle(model.isMLXNative ? Color.indigo : Color.orange)
+                                                                .clipShape(Capsule())
+                                                            Text(model.quantization)
+                                                                .font(.system(size: 9, weight: .semibold))
+                                                                .foregroundStyle(.secondary)
+                                                        }
+                                                        Text(model.path)
+                                                            .font(.system(size: 9.5))
+                                                            .foregroundStyle(.tertiary)
+                                                            .lineLimit(1)
+                                                    }
+                                                    Spacer()
+                                                    Text(model.formattedSize)
+                                                        .font(.system(size: 11, weight: .medium))
+                                                        .foregroundStyle(.secondary)
+                                                }
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 6)
+                                                .background(Color.primary.opacity(0.02), in: RoundedRectangle(cornerRadius: 8))
+                                            }
+                                        }
+                                    } else {
+                                        Text("No models discovered in ~/.lmstudio/models or cache yet.")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(14)
+                                .background(Color.primary.opacity(0.02))
+                                .cornerRadius(12)
                                 
                                 // Gemini Accordion
                                 providerModelAccordionCard(
@@ -3989,8 +4748,8 @@ struct ContentView: View {
                                     onRemove: { manager.removeLMStudioModel($0) }
                                 )
                             }
-                        case .updates:
-                            updatesSettingsView
+                        case .about:
+                            aboutSettingsView
                         }
                     }
                     .padding(28)
@@ -4000,7 +4759,7 @@ struct ContentView: View {
         .frame(width: 820, height: 600)
     }
 
-    private var updatesSettingsView: some View {
+    private var aboutSettingsView: some View {
         VStack(alignment: .leading, spacing: 20) {
             // Version Info Header Card
             VStack(alignment: .leading, spacing: 14) {
@@ -4293,8 +5052,149 @@ struct ContentView: View {
             }
             .padding(20)
             .background(Color.primary.opacity(0.03))
+            // Halite Custom MLX Engine Card
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(LinearGradient(colors: [.orange, .red], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        Image(systemName: "bolt.shield.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                    .frame(width: 28, height: 28)
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Halite Custom MLX Engine")
+                            .font(.subheadline.weight(.bold))
+                        Text("Embedded in-process Metal inference kernel")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Text("v\(InProcessMLXEngine.engineVersion)")
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.orange.opacity(0.12), in: Capsule())
+                        .foregroundStyle(.orange)
+                }
+
+                Divider()
+
+                VStack(spacing: 8) {
+                    HStack {
+                        Label("Engine Architecture", systemImage: "cpu.fill")
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Text("Native MLX In-Process (Zero Server)")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    HStack {
+                        Label("Framework Core", systemImage: "shippingbox.fill")
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Text(InProcessMLXEngine.frameworkVersion)
+                            .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    HStack {
+                        Label("Metal Shaders", systemImage: "memorychip.fill")
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Text(InProcessMLXEngine.metalBackend)
+                            .font(.system(size: 11.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    HStack {
+                        Label("Memory Cache", systemImage: "bolt.horizontal.fill")
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Text("Unified Memory Metal RAM")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(.green)
+                    }
+                }
+            }
+            .padding(20)
+            .background(Color.primary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.orange.opacity(0.2), lineWidth: 1))
+
+            // System & Architecture Card
+            VStack(alignment: .leading, spacing: 14) {
+                Text("SYSTEM & ENVIRONMENT")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+
+                VStack(spacing: 10) {
+                    HStack {
+                        Label("Architecture", systemImage: "cpu")
+                            .font(.system(size: 12.5, weight: .medium))
+                        Spacer()
+                        Text("Apple Silicon (ARM64)")
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Divider()
+
+                    HStack {
+                        Label("Operating System", systemImage: "macwindow")
+                            .font(.system(size: 12.5, weight: .medium))
+                        Spacer()
+                        Text("macOS \(ProcessInfo.processInfo.operatingSystemVersion.majorVersion).\(ProcessInfo.processInfo.operatingSystemVersion.minorVersion).\(ProcessInfo.processInfo.operatingSystemVersion.patchVersion)")
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Divider()
+
+                    HStack {
+                        Label("Security & Sandbox", systemImage: "lock.shield")
+                            .font(.system(size: 12.5, weight: .medium))
+                        Spacer()
+                        Text("Local Keychain & Zero Cloud Telemetry")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.green)
+                    }
+                }
+            }
+            .padding(20)
+            .background(Color.primary.opacity(0.03))
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.secondary.opacity(0.12), lineWidth: 1))
+
+            // Resource Links
+            HStack(spacing: 12) {
+                Link(destination: URL(string: "https://github.com/\(updateManager.repoOwner)/\(updateManager.repoName)") ?? URL(string: "https://github.com")!) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "link")
+                        Text("GitHub Repository")
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.link)
+
+                Text("·")
+                    .foregroundStyle(.secondary)
+
+                Link(destination: URL(string: "https://github.com/\(updateManager.repoOwner)/\(updateManager.repoName)/releases") ?? URL(string: "https://github.com")!) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "tag")
+                        Text("Release Notes")
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.link)
+            }
+            .padding(.horizontal, 4)
         }
         .onAppear {
             if updateManager.state == .idle {
@@ -4561,7 +5461,7 @@ struct ContentView: View {
         case .tools: return "Control real-time search, memory graph, and file system rights."
         case .apiKeys: return "Configure cloud API keys and local server endpoints."
         case .models: return "Add custom model identifiers or organize model drop-down menus."
-        case .updates: return "Check for new releases, view improvements & fixes, and configure auto-updates."
+        case .about: return "App details, release updates, system architecture & documentation."
         }
     }
 
@@ -5172,6 +6072,28 @@ struct TerminalThoughtView: View {
     
     @State private var copied: Bool = false
 
+    private var isInstalling: Bool {
+        let lower = commandText.lowercased()
+        return lower.contains("install") || lower.contains("npm i") || lower.contains("yarn add") || lower.contains("brew cask") || lower.contains("pip ") || lower.contains("pod install") || lower.contains("cargo build")
+    }
+
+    private var runningStatusText: String {
+        if isInstalling {
+            if commandText.localizedCaseInsensitiveContains("npm") {
+                return "Installing npm packages…"
+            } else if commandText.localizedCaseInsensitiveContains("brew") {
+                return "Installing via Homebrew…"
+            } else if commandText.localizedCaseInsensitiveContains("pip") {
+                return "Installing pip packages…"
+            } else if commandText.localizedCaseInsensitiveContains("yarn") {
+                return "Installing yarn packages…"
+            } else {
+                return "Installing dependencies…"
+            }
+        }
+        return "Running command…"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
@@ -5179,16 +6101,16 @@ struct TerminalThoughtView: View {
                     ProgressView()
                         .controlSize(.mini)
                 } else {
-                    Image(systemName: "terminal.fill")
+                    Image(systemName: isInstalling ? "arrow.down.circle.fill" : "terminal.fill")
                         .font(.system(size: 11))
                         .foregroundStyle(didSucceed == false ? .red : .green)
                 }
                 
-                Text("terminal action")
+                Text(isInstalling ? "installation" : "terminal action")
                     .font(.system(size: 11.5, weight: .regular, design: .monospaced))
                 
                 if !isComplete {
-                    Text("Running…")
+                    Text(runningStatusText)
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(.teal)
                         .symbolEffect(.pulse, isActive: true)
@@ -5381,14 +6303,122 @@ private final class ComposerNSTextView: NSTextView {
     }
 }
 
+final class FollowUpSelectionNSView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+struct TextSelectionFollowUpTracker: NSViewRepresentable {
+    @Binding var selectedText: String?
+    @Binding var selectionCenterInLocal: CGPoint?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(selectedText: $selectedText, selectionCenterInLocal: $selectionCenterInLocal)
+    }
+
+    func makeNSView(context: Context) -> FollowUpSelectionNSView {
+        let view = FollowUpSelectionNSView()
+        context.coordinator.startObserving(view: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: FollowUpSelectionNSView, context: Context) {
+        context.coordinator.parentView = nsView
+    }
+
+    final class Coordinator: NSObject {
+        var selectedText: Binding<String?>
+        var selectionCenterInLocal: Binding<CGPoint?>
+        weak var parentView: FollowUpSelectionNSView?
+        private var observer: NSObjectProtocol?
+
+        init(selectedText: Binding<String?>, selectionCenterInLocal: Binding<CGPoint?>) {
+            self.selectedText = selectedText
+            self.selectionCenterInLocal = selectionCenterInLocal
+            super.init()
+        }
+
+        func startObserving(view: FollowUpSelectionNSView) {
+            self.parentView = view
+            observer = NotificationCenter.default.addObserver(
+                forName: NSTextView.didChangeSelectionNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                self?.handleSelectionChange(notification)
+            }
+        }
+
+        deinit {
+            if let observer = observer {
+                NotificationCenter.default.removeObserver(observer)
+            }
+        }
+
+        private func handleSelectionChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            // Ignore composer text view selections
+            if textView is ComposerNSTextView { return }
+            guard let parentView = parentView, let window = textView.window, window == parentView.window else { return }
+
+            let range = textView.selectedRange()
+            if range.length > 0, let string = textView.string as NSString?, range.location + range.length <= string.length {
+                let text = string.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    let layoutManager = textView.layoutManager
+                    let textContainer = textView.textContainer
+                    if let layoutManager = layoutManager, let textContainer = textContainer {
+                        let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                        var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+                        rect.origin.x += textView.textContainerOrigin.x
+                        rect.origin.y += textView.textContainerOrigin.y
+                        
+                        let localRect = parentView.convert(rect, from: textView)
+                        let centerPoint = CGPoint(x: localRect.midX, y: max(24, localRect.minY - 24))
+                        
+                        DispatchQueue.main.async {
+                            self.selectedText.wrappedValue = text
+                            self.selectionCenterInLocal.wrappedValue = centerPoint
+                        }
+                        return
+                    }
+                }
+            }
+
+            DispatchQueue.main.async {
+                if self.selectedText.wrappedValue != nil {
+                    self.selectedText.wrappedValue = nil
+                    self.selectionCenterInLocal.wrappedValue = nil
+                }
+            }
+        }
+    }
+}
+
 struct ReasoningThoughtView: View {
     let reasoningText: String
     let isGenerating: Bool
     let isComplete: Bool
     let showsCopyAction: Bool
+    let defaultExpanded: Bool
     
-    @State private var isExpanded: Bool = false
+    @State private var isExpanded: Bool
     @State private var copied: Bool = false
+    @State private var hasManuallyToggled: Bool = false
+
+    init(
+        reasoningText: String,
+        isGenerating: Bool,
+        isComplete: Bool,
+        showsCopyAction: Bool = true,
+        defaultExpanded: Bool = false
+    ) {
+        self.reasoningText = reasoningText
+        self.isGenerating = isGenerating
+        self.isComplete = isComplete
+        self.showsCopyAction = showsCopyAction
+        self.defaultExpanded = defaultExpanded
+        self._isExpanded = State(initialValue: defaultExpanded)
+    }
 
     private var wordCount: Int {
         reasoningText.components(separatedBy: .whitespacesAndNewlines).filter({ !$0.isEmpty }).count
@@ -5397,6 +6427,7 @@ struct ReasoningThoughtView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button(action: {
+                hasManuallyToggled = true
                 withAnimation(.easeInOut(duration: 0.2)) {
                     isExpanded.toggle()
                 }
@@ -5409,6 +6440,11 @@ struct ReasoningThoughtView: View {
                         .font(.system(size: 11.5, weight: .regular, design: .monospaced))
                     
                     if isGenerating && !isComplete {
+                        if wordCount > 0 {
+                            Text("(\(wordCount) words)")
+                                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                                .foregroundStyle(.secondary.opacity(0.8))
+                        }
                         Text("...")
                             .font(.system(size: 11.5, weight: .regular, design: .monospaced))
                             .symbolEffect(.pulse, isActive: true)
@@ -5459,6 +6495,13 @@ struct ReasoningThoughtView: View {
             }
         }
         .padding(.bottom, 4)
+        .onChange(of: defaultExpanded) {
+            if !hasManuallyToggled {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded = defaultExpanded
+                }
+            }
+        }
     }
 }
 
@@ -5599,7 +6642,7 @@ struct SearchQueryRowView: View {
 }
 
 struct SearchSourceCapsuleView: View {
-    let source: (url: String, title: String)
+    let source: (title: String, url: String)
     @State private var isHovered = false
 
     var body: some View {
@@ -5728,14 +6771,127 @@ struct ActivityFlowLayout: Layout {
     }
 }
 
-private enum InlineMarkdownToken {
-    case text(AttributedString)
-    case link(label: String, destination: URL)
+private enum MarkdownInlineSegment: Hashable {
+    case text(String)
+    case link(title: String, url: String)
 }
 
-/// Renders Markdown links as compact, favicon-backed source pills while the
-/// surrounding prose continues to wrap word by word. Using AttributedString
-/// runs preserves native bold, italic, and inline-code presentation.
+private struct InlineLinkPillView: View {
+    let title: String
+    let urlString: String
+    let font: Font
+    @State private var isHovered = false
+
+    private var destinationURL: URL? {
+        URL(string: urlString)
+    }
+
+    private var hostDomain: String {
+        guard let url = destinationURL, let host = url.host() else {
+            return title.isEmpty ? urlString : title
+        }
+        return host.replacingOccurrences(of: "www.", with: "")
+    }
+
+    private var displayLabel: String {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanTitle.isEmpty && !cleanTitle.lowercased().hasPrefix("http") {
+            return cleanTitle
+        }
+        return hostDomain
+    }
+
+    var body: some View {
+        if let destination = destinationURL {
+            Link(destination: destination) {
+                HStack(spacing: 5) {
+                    if let host = destination.host(),
+                       let faviconURL = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=32") {
+                        AsyncImage(url: faviconURL) { image in
+                            image.resizable().scaledToFit()
+                        } placeholder: {
+                            Image(systemName: "globe")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.blue)
+                        }
+                        .frame(width: 12, height: 12)
+                        .clipShape(Circle())
+                    } else {
+                        Image(systemName: "globe")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.blue)
+                    }
+
+                    Text(displayLabel)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(isHovered ? Color.primary : Color.primary.opacity(0.85))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(Color.primary.opacity(isHovered ? 0.12 : 0.06))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(Color.primary.opacity(isHovered ? 0.22 : 0.1), lineWidth: 0.75)
+                )
+            }
+            .buttonStyle(.plain)
+            .help(title.isEmpty ? urlString : "\(title)\n\(urlString)")
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.12)) {
+                    isHovered = hovering
+                }
+            }
+        }
+    }
+}
+
+private func parseInlineSegments(from text: String) -> [MarkdownInlineSegment] {
+    let linkPattern = #"(?<!!)\[([^\]]+)\]\(((?:https?://|www\.)[^\)]+)\)"#
+    guard let regex = try? NSRegularExpression(pattern: linkPattern) else {
+        return [.text(text)]
+    }
+
+    var segments: [MarkdownInlineSegment] = []
+    let fullRange = NSRange(text.startIndex..., in: text)
+    var lastIndex = text.startIndex
+
+    let matches = regex.matches(in: text, range: fullRange)
+    for match in matches {
+        guard let matchRange = Range(match.range, in: text),
+              let titleRange = Range(match.range(at: 1), in: text),
+              let urlRange = Range(match.range(at: 2), in: text) else { continue }
+
+        if lastIndex < matchRange.lowerBound {
+            let beforeText = String(text[lastIndex..<matchRange.lowerBound])
+            if !beforeText.isEmpty {
+                segments.append(.text(beforeText))
+            }
+        }
+
+        let linkTitle = String(text[titleRange])
+        var linkURL = String(text[urlRange])
+        if linkURL.hasPrefix("www.") {
+            linkURL = "https://" + linkURL
+        }
+        segments.append(.link(title: linkTitle, url: linkURL))
+        lastIndex = matchRange.upperBound
+    }
+
+    if lastIndex < text.endIndex {
+        let remaining = String(text[lastIndex...])
+        if !remaining.isEmpty {
+            segments.append(.text(remaining))
+        }
+    }
+
+    return segments.isEmpty ? [.text(text)] : segments
+}
+
+/// Renders Markdown inline text with full native macOS text selection, styling, and link support.
 private struct InlineMarkdownPillText: View {
     let markdown: String
     let font: Font
@@ -5743,249 +6899,53 @@ private struct InlineMarkdownPillText: View {
     var horizontalSpacing: CGFloat = 4
     var sourceLinks: [(title: String, url: String)] = []
 
-    private var tokens: [InlineMarkdownToken] {
-        guard let attributed = try? AttributedString(
-            markdown: markdown,
-            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        ) else {
-            return [.text(AttributedString(markdown))]
-        }
+    private var hasMarkdownLinks: Bool {
+        let linkPattern = #"(?<!!)\[([^\]]+)\]\(((?:https?://|www\.)[^\)]+)\)"#
+        return markdown.range(of: linkPattern, options: .regularExpression) != nil
+    }
 
-        var result: [InlineMarkdownToken] = []
-        for run in attributed.runs {
-            let content = AttributedString(attributed[run.range])
-            if let destination = run.link,
-               let url = URL(string: destination.absoluteString) {
-                let label = String(content.characters)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !label.isEmpty else { continue }
-                if case .link(let previousLabel, let previousURL) = result.last,
-                   previousURL == url {
-                    result[result.count - 1] = .link(label: previousLabel + label, destination: url)
-                } else {
-                    result.append(.link(label: label, destination: url))
-                }
-            } else {
-                result.append(contentsOf: wordTokens(from: content))
-            }
+    private func parseAttributedString(_ text: String) -> AttributedString {
+        if let attr = try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            return attr
         }
-        return removingCitationParentheses(from: expandingPlainCitations(in: result))
+        // If parsing fails (e.g. unescaped underscores in identifiers), sanitize and retry
+        let sanitized = text.replacingOccurrences(of: "_", with: "\\_")
+        if let attr = try? AttributedString(
+            markdown: sanitized,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            return attr
+        }
+        return AttributedString(text)
     }
 
     var body: some View {
-        ActivityFlowLayout(spacing: horizontalSpacing, centersItems: true) {
-            ForEach(Array(tokens.enumerated()), id: \.offset) { _, token in
-                switch token {
-                case .text(let value):
-                    Text(value)
-                        .font(font)
-                        .foregroundStyle(foregroundColor)
-                        .fixedSize()
-                        .layoutValue(
-                            key: FlowLeadingSpacingKey.self,
-                            value: hasTightLeadingPunctuation(value) ? 0 : .nan
-                        )
-                case .link(let label, let destination):
-                    let displayLabel = siteDisplayName(label: label, destination: destination)
-                    Link(destination: destination) {
-                        HStack(spacing: 3) {
-                            favicon(for: destination, label: displayLabel)
-                            Text(displayLabel)
-                                .font(.system(size: 10, weight: .medium))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 4)
-                        .padding(.trailing, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.primary.opacity(0.11), in: Capsule())
-                        .contentShape(Capsule())
+        if hasMarkdownLinks {
+            let segments = parseInlineSegments(from: markdown)
+            ActivityFlowLayout(spacing: 5, centersItems: true) {
+                ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                    switch segment {
+                    case .text(let span):
+                        Text(parseAttributedString(span))
+                            .font(font)
+                            .foregroundStyle(foregroundColor)
+                            .textSelection(.enabled)
+                    case .link(let title, let url):
+                        InlineLinkPillView(title: title, urlString: url, font: font)
                     }
-                    .buttonStyle(.plain)
-                    .help("Open \(destination.absoluteString)")
-                    .accessibilityLabel("Open \(displayLabel)")
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private func favicon(for destination: URL, label: String) -> some View {
-        let host = destination.host() ?? ""
-        if !host.isEmpty,
-           let faviconURL = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=64") {
-            AsyncImage(url: faviconURL) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                faviconPlaceholder(label: label)
-            }
-            .frame(width: 11, height: 11)
-            .clipShape(Circle())
+            .fixedSize(horizontal: false, vertical: true)
         } else {
-            faviconPlaceholder(label: label)
-                .frame(width: 11, height: 11)
-        }
-    }
-
-    private func faviconPlaceholder(label: String) -> some View {
-        ZStack {
-            Circle().fill(Color.red.opacity(0.88))
-            Text(String(label.prefix(1)).uppercased())
-                .font(.system(size: 7, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-        }
-    }
-
-    private func hasTightLeadingPunctuation(_ value: AttributedString) -> Bool {
-        guard let first = value.characters.first else { return false }
-        return ".,;:!?)]}".contains(first)
-    }
-
-    private func siteDisplayName(label: String, destination: URL) -> String {
-        let cleanLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = cleanLabel.lowercased().filter(\.isLetter)
-        let knownBrands: [String: String] = [
-            "producthunt": "Product Hunt",
-            "macosupdate": "macOS Update",
-            "macworld": "Macworld",
-            "wikipedia": "Wikipedia",
-            "reddit": "Reddit",
-            "github": "GitHub",
-            "youtube": "YouTube",
-            "linkedin": "LinkedIn",
-            "stackoverflow": "Stack Overflow",
-            "techcrunch": "TechCrunch",
-            "theverge": "The Verge",
-            "hackernews": "Hacker News"
-        ]
-        if let brand = knownBrands[key] { return brand }
-
-        let host = destination.host()?.lowercased() ?? ""
-        let looksLikeRawSiteName = cleanLabel.contains(".") ||
-            cleanLabel.lowercased().hasPrefix("http") ||
-            cleanLabel.lowercased() == host ||
-            cleanLabel.lowercased() == host.replacingOccurrences(of: "www.", with: "")
-        guard looksLikeRawSiteName else { return cleanLabel }
-
-        let components = host
-            .replacingOccurrences(of: "www.", with: "")
-            .split(separator: ".")
-            .map(String.init)
-        if let known = components.compactMap({ knownBrands[$0] }).first { return known }
-        return (components.first ?? cleanLabel)
-            .replacingOccurrences(of: "-", with: " ")
-            .capitalized
-    }
-
-    private func wordTokens(from attributed: AttributedString) -> [InlineMarkdownToken] {
-        var words: [InlineMarkdownToken] = []
-        var wordStart: AttributedString.Index?
-        var index = attributed.startIndex
-
-        while index < attributed.endIndex {
-            let character = attributed.characters[index]
-            if character.isWhitespace {
-                if let start = wordStart {
-                    words.append(.text(AttributedString(attributed[start..<index])))
-                    wordStart = nil
-                }
-            } else if wordStart == nil {
-                wordStart = index
-            }
-            index = attributed.characters.index(after: index)
-        }
-        if let wordStart {
-            words.append(.text(AttributedString(attributed[wordStart..<attributed.endIndex])))
-        }
-        return words
-    }
-
-    private func expandingPlainCitations(in input: [InlineMarkdownToken]) -> [InlineMarkdownToken] {
-        guard !sourceLinks.isEmpty else { return input }
-        return input.flatMap { token -> [InlineMarkdownToken] in
-            guard case .text(let value) = token else { return [token] }
-            var raw = String(value.characters)
-            var trailingPunctuation = ""
-            if let last = raw.last,
-               ".,;:!?".contains(last),
-               raw.dropLast().hasSuffix(")") {
-                trailingPunctuation = String(last)
-                raw.removeLast()
-            }
-
-            let label: String
-            if raw.hasPrefix("(["), raw.hasSuffix("])") {
-                label = String(raw.dropFirst(2).dropLast(2))
-            } else if raw.hasPrefix("("), raw.hasSuffix(")") {
-                label = String(raw.dropFirst().dropLast())
-            } else {
-                return [token]
-            }
-
-            guard let source = matchingSource(for: label),
-                  let destination = URL(string: source.url) else { return [token] }
-            var expanded: [InlineMarkdownToken] = [.link(label: label, destination: destination)]
-            if !trailingPunctuation.isEmpty {
-                expanded.append(.text(AttributedString(trailingPunctuation)))
-            }
-            return expanded
-        }
-    }
-
-    private func matchingSource(for label: String) -> (title: String, url: String)? {
-        let key = normalizedSiteKey(label)
-        guard key.count >= 3 else { return nil }
-        return sourceLinks.first { source in
-            let titleKey = normalizedSiteKey(source.title)
-            let hostKey = URL(string: source.url)
-                .flatMap { $0.host() }
-                .map(normalizedSiteKey) ?? ""
-            return titleKey.contains(key) || hostKey.contains(key) || key.contains(hostKey)
-        }
-    }
-
-    private func normalizedSiteKey(_ value: String) -> String {
-        value.lowercased().filter(\.isLetter)
-    }
-
-    private func removingCitationParentheses(from input: [InlineMarkdownToken]) -> [InlineMarkdownToken] {
-        var result = input
-        guard result.count >= 3 else { return result }
-
-        for openIndex in result.indices {
-            guard case .text(let opening) = result[openIndex],
-                  String(opening.characters).hasSuffix("(") else { continue }
-
-            var cursor = openIndex + 1
-            var containsLink = false
-            while cursor < result.count {
-                switch result[cursor] {
-                case .link:
-                    containsLink = true
-                case .text(let value):
-                    let valueText = String(value.characters)
-                    if valueText.hasPrefix(")") {
-                        guard containsLink else { break }
-                        let before = String(opening.characters.dropLast())
-                        let after = String(valueText.dropFirst())
-                        result[openIndex] = .text(AttributedString(before))
-                        result[cursor] = .text(AttributedString(after))
-                        cursor = result.count
-                        continue
-                    }
-                    let separator = valueText.lowercased()
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard ["/", "|", ",", "&", "and", "•"].contains(separator) else {
-                        cursor = result.count
-                        continue
-                    }
-                }
-                cursor += 1
-            }
-        }
-        return result.filter { token in
-            if case .text(let value) = token { return !value.characters.isEmpty }
-            return true
+            Text(parseAttributedString(markdown))
+                .font(font)
+                .lineSpacing(3.5)
+                .foregroundStyle(foregroundColor)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -6087,27 +7047,54 @@ struct MarkdownView: View {
                 continue
             }
             
-            // 2. Table handling. A completed response is a table only when it
-            // has a Markdown alignment row. While streaming, pipe-prefixed
-            // candidate rows are buffered so raw syntax never flashes.
-            if trimmed.hasPrefix("|") {
+            // Math Block handling ($$ ... $$)
+            if trimmed.hasPrefix("$$") {
+                var mathLines: [String] = []
+                let firstLine = String(trimmed.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !firstLine.isEmpty && firstLine.hasSuffix("$$") {
+                    let equation = String(firstLine.dropLast(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    blocks.append(.codeBlock(code: equation, language: "math"))
+                    i += 1
+                    continue
+                }
+                if !firstLine.isEmpty {
+                    mathLines.append(firstLine)
+                }
+                i += 1
+                while i < count {
+                    let mLine = lines[i]
+                    let mTrimmed = mLine.trimmingCharacters(in: .whitespaces)
+                    if mTrimmed.hasSuffix("$$") || mTrimmed == "$$" {
+                        let content = String(mTrimmed.dropLast(mTrimmed.hasSuffix("$$") ? 2 : 0)).trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !content.isEmpty { mathLines.append(content) }
+                        i += 1
+                        break
+                    }
+                    mathLines.append(mLine)
+                    i += 1
+                }
+                blocks.append(.codeBlock(code: mathLines.joined(separator: "\n"), language: "math"))
+                continue
+            }
+            
+            // 2. Table handling.
+            if trimmed.hasPrefix("|") || (trimmed.contains("|") && lines.indices.contains(i + 1) && lines[i + 1].trimmingCharacters(in: .whitespaces).contains("|-")) {
                 var candidateLines: [String] = []
                 var cursor = i
                 while cursor < count {
                     let candidate = lines[cursor].trimmingCharacters(in: .whitespaces)
-                    guard candidate.hasPrefix("|") else { break }
+                    guard candidate.contains("|") && !candidate.hasPrefix("```") else { break }
                     candidateLines.append(candidate)
                     cursor += 1
                 }
 
-                let completeLines = candidateLines.filter { $0.hasSuffix("|") }
-                let hasAlignmentRow = completeLines.contains { candidate in
+                let hasAlignmentRow = candidateLines.contains { candidate in
                     let cells = candidate.components(separatedBy: "|")
-                        .dropFirst().dropLast()
                         .map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { !$0.isEmpty }
                     return !cells.isEmpty && cells.allSatisfy { cell in
-                        let core = cell.trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-                        return core.count >= 3 && core.allSatisfy { $0 == "-" }
+                        let core = cell.trimmingCharacters(in: CharacterSet(charactersIn: ": "))
+                        return core.count >= 2 && core.allSatisfy { $0 == "-" }
                     }
                 }
 
@@ -6118,17 +7105,19 @@ struct MarkdownView: View {
                 }
 
                 var tableRows: [[String]] = []
-                for tLine in candidateLines where tLine.hasSuffix("|") {
-                        let cells = tLine.components(separatedBy: "|")
-                            .dropFirst().dropLast()
-                            .map { $0.trimmingCharacters(in: .whitespaces) }
-                        let isAlignRow = cells.allSatisfy { cell in
-                            let core = cell.trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-                            return core.count >= 3 && core.allSatisfy { $0 == "-" }
-                        }
-                        if !isAlignRow {
-                            tableRows.append(cells)
-                        }
+                for tLine in candidateLines {
+                    var cells = tLine.components(separatedBy: "|")
+                        .map { $0.trimmingCharacters(in: .whitespaces) }
+                    if tLine.hasPrefix("|") && !cells.isEmpty { cells.removeFirst() }
+                    if tLine.hasSuffix("|") && !cells.isEmpty { cells.removeLast() }
+                    
+                    let isAlignRow = !cells.isEmpty && cells.allSatisfy { cell in
+                        let core = cell.trimmingCharacters(in: CharacterSet(charactersIn: ": "))
+                        return core.count >= 2 && core.allSatisfy { $0 == "-" }
+                    }
+                    if !isAlignRow && !cells.isEmpty {
+                        tableRows.append(cells)
+                    }
                 }
                 i = cursor
                 if !tableRows.isEmpty {
@@ -6273,15 +7262,9 @@ struct MarkdownView: View {
     
     private func isSectionHeader(_ trimmed: String) -> Bool {
         let lower = trimmed.lowercased()
-        let prefixes = ["method ", "option ", "phase ", "part ", "approach ", "solution "]
+        let prefixes = ["method ", "option ", "phase ", "part ", "approach ", "solution ", "step ", "section "]
         for p in prefixes {
             if lower.hasPrefix(p) || lower.hasPrefix("**" + p) {
-                return true
-            }
-        }
-        if trimmed.hasPrefix("**") && trimmed.hasSuffix("**") && trimmed.count >= 4 && trimmed.count <= 90 {
-            let inside = trimmed.dropFirst(2).dropLast(2)
-            if !inside.contains("\n") && inside.components(separatedBy: ". ").count <= 1 {
                 return true
             }
         }
@@ -6335,7 +7318,7 @@ struct MarkdownView: View {
     
     var body: some View {
         let blocks = parseMarkdown(text: text)
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
                 switch block {
                 case .paragraph(let text):
@@ -6344,7 +7327,8 @@ struct MarkdownView: View {
                         font: chatAppFont(size: advancedRender ? 15.5 : 13.5),
                         sourceLinks: sourceLinks
                     )
-                        .fixedSize(horizontal: false, vertical: true)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 3)
                         
                 case .heading(let title, let level):
                     VStack(alignment: .leading, spacing: 0) {
@@ -6354,32 +7338,32 @@ struct MarkdownView: View {
                                 font: chatAppFont(size: advancedRender ? 21 : 19, weight: .bold),
                                 sourceLinks: sourceLinks
                             )
-                                .padding(.top, 12)
-                                .padding(.bottom, 4)
+                            .padding(.top, 12)
+                            .padding(.bottom, 4)
                         } else if level == 2 {
                             InlineMarkdownPillText(
                                 markdown: title,
                                 font: chatAppFont(size: advancedRender ? 18.5 : 16.5, weight: .bold),
                                 sourceLinks: sourceLinks
                             )
-                                .padding(.top, 10)
-                                .padding(.bottom, 3)
+                            .padding(.top, 10)
+                            .padding(.bottom, 3)
                         } else if level == 3 {
                             InlineMarkdownPillText(
                                 markdown: title,
                                 font: chatAppFont(size: advancedRender ? 16 : 14.5, weight: .semibold),
                                 sourceLinks: sourceLinks
                             )
-                                .padding(.top, 8)
-                                .padding(.bottom, 2)
+                            .padding(.top, 8)
+                            .padding(.bottom, 2)
                         } else {
                             InlineMarkdownPillText(
                                 markdown: title,
                                 font: chatAppFont(size: advancedRender ? 15 : 13.5, weight: .semibold),
                                 sourceLinks: sourceLinks
                             )
-                                .padding(.top, 6)
-                                .padding(.bottom, 2)
+                            .padding(.top, 6)
+                            .padding(.bottom, 2)
                         }
                     }
                     
@@ -6389,61 +7373,42 @@ struct MarkdownView: View {
                         font: chatAppFont(size: advancedRender ? 16 : 14.5, weight: .bold),
                         sourceLinks: sourceLinks
                     )
-                        .padding(.top, 10)
-                        .padding(.bottom, 3)
+                    .padding(.top, 8)
+                    .padding(.bottom, 2)
                     
                 case .numberedItem(let number, let itemText, let indentLevel):
-                    HStack(alignment: .top, spacing: 8) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.blue.opacity(0.12))
-                                .frame(width: 20, height: 20)
-                            Text(number)
-                                .font(.system(size: 11, weight: .bold, design: .rounded))
-                                .foregroundStyle(.blue)
-                        }
-                        .padding(.top, 1)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("\(number).")
+                            .font(chatAppFont(size: advancedRender ? 15.5 : 13.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 16, alignment: .trailing)
                         
                         InlineMarkdownPillText(
                             markdown: itemText,
                             font: chatAppFont(size: advancedRender ? 15.5 : 13.5),
                             sourceLinks: sourceLinks
                         )
-                            .fixedSize(horizontal: false, vertical: true)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.leading, CGFloat(indentLevel) * 16)
                     .padding(.vertical, 1.5)
                     
                 case .bulletPoint(let bulletText, let indentLevel):
-                    HStack(alignment: .top, spacing: 8) {
-                        Group {
-                            if indentLevel == 0 {
-                                Circle()
-                                    .fill(Color.blue.opacity(0.85))
-                                    .frame(width: 5, height: 5)
-                                    .padding(.top, 7)
-                            } else if indentLevel == 1 {
-                                Circle()
-                                    .stroke(Color.primary.opacity(0.5), lineWidth: 1.2)
-                                    .frame(width: 4.5, height: 4.5)
-                                    .padding(.top, 7)
-                            } else {
-                                Rectangle()
-                                    .fill(Color.secondary)
-                                    .frame(width: 4, height: 4)
-                                    .padding(.top, 7)
-                            }
-                        }
+                    HStack(alignment: .top, spacing: 7) {
+                        Text("•")
+                            .font(chatAppFont(size: advancedRender ? 15.5 : 13.5, weight: .bold))
+                            .foregroundStyle(Color.accentColor.opacity(0.85))
+                            .frame(width: 10, alignment: .center)
                         
                         InlineMarkdownPillText(
                             markdown: bulletText,
                             font: chatAppFont(size: advancedRender ? 15.5 : 13.5),
                             sourceLinks: sourceLinks
                         )
-                            .fixedSize(horizontal: false, vertical: true)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.leading, CGFloat(indentLevel == 0 ? 4 : (indentLevel * 18)))
-                    .padding(.vertical, 2.5)
+                    .padding(.leading, CGFloat(indentLevel) * 16)
+                    .padding(.vertical, 1.5)
                     
                 case .callout(let title, let calloutText, let type):
                     HStack(alignment: .top, spacing: 10) {
@@ -6473,6 +7438,7 @@ struct MarkdownView: View {
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(type.accentColor.opacity(0.08))
                     )
+                    .padding(.vertical, 4)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .stroke(type.accentColor.opacity(0.25), lineWidth: 1)
@@ -6520,6 +7486,8 @@ struct MarkdownCodeBlockView: View {
                 Text(language?.uppercased() ?? "CODE")
                     .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 
                 Spacer()
                 
@@ -6584,58 +7552,61 @@ struct TableView: View {
         let columnCount = rows.map(\.count).max() ?? 0
 
         return AnyView(
-            VStack(spacing: 0) {
-                // Header Row
-                if let headerRow = rows.first {
-                    HStack(spacing: 16) {
-                        ForEach(0..<columnCount, id: \.self) { colIndex in
-                            let value = colIndex < headerRow.count ? headerRow[colIndex] : ""
-                            InlineMarkdownPillText(
-                                markdown: value.trimmingCharacters(in: .whitespacesAndNewlines),
-                                font: .system(size: 12, weight: .bold, design: .rounded),
-                                sourceLinks: sourceLinks
-                            )
-                                .frame(maxWidth: .infinity, alignment: .leading)
+            ScrollView(.horizontal, showsIndicators: true) {
+                VStack(spacing: 0) {
+                    // Header Row
+                    if let headerRow = rows.first {
+                        HStack(spacing: 16) {
+                            ForEach(0..<columnCount, id: \.self) { colIndex in
+                                let value = colIndex < headerRow.count ? headerRow[colIndex] : ""
+                                InlineMarkdownPillText(
+                                    markdown: value.trimmingCharacters(in: .whitespacesAndNewlines),
+                                    font: .system(size: 12, weight: .bold, design: .rounded),
+                                    sourceLinks: sourceLinks
+                                )
+                                .frame(minWidth: 90, maxWidth: .infinity, alignment: .leading)
+                            }
                         }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color.primary.opacity(0.06))
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(Color.primary.opacity(0.06))
-                }
-                
-                Divider()
-                    .opacity(0.2)
-                
-                // Data Rows
-                if rows.count > 1 {
-                    VStack(spacing: 0) {
-                        ForEach(1..<rows.count, id: \.self) { rowIndex in
-                            let columns = rows[rowIndex]
-                            VStack(spacing: 0) {
-                                HStack(spacing: 16) {
-                                    ForEach(0..<columnCount, id: \.self) { colIndex in
-                                        let value = colIndex < columns.count ? columns[colIndex] : ""
-                                        InlineMarkdownPillText(
-                                            markdown: value.trimmingCharacters(in: .whitespacesAndNewlines),
-                                            font: .system(size: 12.5, weight: .regular),
-                                            foregroundColor: .secondary,
-                                            sourceLinks: sourceLinks
-                                        )
-                                            .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    Divider()
+                        .opacity(0.2)
+                    
+                    // Data Rows
+                    if rows.count > 1 {
+                        VStack(spacing: 0) {
+                            ForEach(1..<rows.count, id: \.self) { rowIndex in
+                                let columns = rows[rowIndex]
+                                VStack(spacing: 0) {
+                                    HStack(spacing: 16) {
+                                        ForEach(0..<columnCount, id: \.self) { colIndex in
+                                            let value = colIndex < columns.count ? columns[colIndex] : ""
+                                            InlineMarkdownPillText(
+                                                markdown: value.trimmingCharacters(in: .whitespacesAndNewlines),
+                                                font: .system(size: 12.5, weight: .regular),
+                                                foregroundColor: .secondary,
+                                                sourceLinks: sourceLinks
+                                            )
+                                            .frame(minWidth: 90, maxWidth: .infinity, alignment: .leading)
+                                        }
                                     }
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 9)
-                                .background(rowIndex % 2 == 0 ? Color.primary.opacity(0.025) : Color.clear)
-                                
-                                if rowIndex < rows.count - 1 {
-                                    Divider()
-                                        .opacity(0.08)
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 9)
+                                    .background(rowIndex % 2 == 0 ? Color.primary.opacity(0.025) : Color.clear)
+                                    
+                                    if rowIndex < rows.count - 1 {
+                                        Divider()
+                                            .opacity(0.08)
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                .frame(minWidth: max(320, CGFloat(columnCount) * 100))
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .background(
@@ -6809,6 +7780,131 @@ private func searchLinksForSearchActivity(startingAt message: ChatMessage, in th
         }
     }
     return collected
+}
+
+struct SearchQueryGroup: Identifiable {
+    let id: String
+    let query: String
+    let sources: [(title: String, url: String)]
+    
+    init(query: String, sources: [(title: String, url: String)]) {
+        self.id = query
+        self.query = query
+        self.sources = sources
+    }
+}
+
+/// Group search sources under their specific query in execution order.
+private func searchQueryGroupsForSearchActivity(startingAt message: ChatMessage, in thread: ChatThread) -> [SearchQueryGroup] {
+    guard let startIndex = thread.messages.firstIndex(where: { $0.id == message.id }) else { return [] }
+    var turnStartIndex = 0
+    var cursor = startIndex - 1
+    while cursor >= 0 {
+        let candidate = thread.messages[cursor]
+        if candidate.role == .user && !candidate.isToolResponse {
+            turnStartIndex = cursor + 1
+            break
+        }
+        cursor -= 1
+    }
+
+    var groupMap: [String: [(title: String, url: String)]] = [:]
+    var orderedQueries: [String] = []
+    var allTurnSources: [(title: String, url: String)] = []
+    var seenGlobalURLs = Set<String>()
+
+    for candidate in thread.messages[turnStartIndex...] {
+        if candidate.role == .user && !candidate.isToolResponse { break }
+        guard candidate.isToolResponse else { continue }
+        
+        let toolLinks = parseSearchLinks(from: candidate.text)
+        for link in toolLinks where seenGlobalURLs.insert(link.url).inserted {
+            allTurnSources.append(link)
+        }
+        
+        guard let jsonText = firstJSONObject(in: candidate.text),
+              let data = jsonText.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let resp = json["tool_response"] as? [String: Any] else { continue }
+        
+        // Check for structured query_sources list
+        if let querySourcesList = resp["query_sources"] as? [[String: Any]] {
+            for item in querySourcesList {
+                guard let q = item["query"] as? String, !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                if !orderedQueries.contains(q) {
+                    orderedQueries.append(q)
+                }
+                var currentSources = groupMap[q] ?? []
+                var seenQueryURLs = Set(currentSources.map(\.url))
+                if let rawSources = item["sources"] as? [[String: Any]] {
+                    for s in rawSources {
+                        let rawURL = (s["url"] as? String) ?? (s["link"] as? String) ?? ""
+                        guard !rawURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                        let normURL = normalizedSearchURL(rawURL)
+                        if seenQueryURLs.insert(normURL).inserted {
+                            let title = (s["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                            let displayTitle = title.flatMap { $0.isEmpty ? nil : $0 } ?? rawURL
+                            currentSources.append((title: displayTitle, url: normURL))
+                        }
+                    }
+                }
+                groupMap[q] = currentSources
+            }
+        } else {
+            // Fallback: parse from fetched_evidence / search_results text blocks
+            if let searchResults = (resp["search_results"] as? String) ?? (resp["fetched_evidence"] as? String) {
+                let blocks = searchResults.components(separatedBy: "- Title: ")
+                for block in blocks {
+                    let lines = block.components(separatedBy: "\n")
+                    var title = ""
+                    var url = ""
+                    var evidenceQuery = ""
+                    for line in lines {
+                        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if trimmed.hasPrefix("Evidence query:") {
+                            evidenceQuery = trimmed.replacingOccurrences(of: "Evidence query:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        } else if trimmed.hasPrefix("URL:") {
+                            url = trimmed.replacingOccurrences(of: "URL:", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        } else if title.isEmpty && !trimmed.isEmpty && !trimmed.hasPrefix("Snippet:") && !trimmed.hasPrefix("Fetched evidence:") {
+                            title = trimmed
+                        }
+                    }
+                    if !url.isEmpty {
+                        let targetQuery = evidenceQuery.isEmpty ? (resp["executed_query"] as? String ?? "Search Query") : evidenceQuery
+                        if !orderedQueries.contains(targetQuery) {
+                            orderedQueries.append(targetQuery)
+                        }
+                        var currentSources = groupMap[targetQuery] ?? []
+                        let normURL = normalizedSearchURL(url)
+                        if !currentSources.contains(where: { $0.url == normURL }) {
+                            currentSources.append((title: title.isEmpty ? url : title, url: normURL))
+                        }
+                        groupMap[targetQuery] = currentSources
+                    }
+                }
+            }
+            
+            // Also collect any executed_queries
+            for query in parseExecutedSearchQueries(from: candidate.text) {
+                if !orderedQueries.contains(query) {
+                    orderedQueries.append(query)
+                }
+            }
+        }
+    }
+
+    if orderedQueries.isEmpty && !allTurnSources.isEmpty {
+        return [SearchQueryGroup(query: "Search Results", sources: allTurnSources)]
+    }
+
+    if orderedQueries.count == 1, let singleQ = orderedQueries.first {
+        let sources = groupMap[singleQ] ?? allTurnSources
+        return [SearchQueryGroup(query: singleQ, sources: sources)]
+    }
+
+    return orderedQueries.map { q in
+        SearchQueryGroup(query: q, sources: groupMap[q] ?? [])
+    }
 }
 
 /// Collect every exact provider query used in one user turn, including
@@ -7514,25 +8610,42 @@ struct SearchingGlobeView: View {
 }
 
 struct TerminalExecutingView: View {
+    var statusText: String? = nil
+    @Environment(ChatManager.self) private var manager
     @State private var blinkOpacity: Double = 0.3
     
+    private var effectiveStatusText: String {
+        if let statusText, !statusText.isEmpty {
+            return statusText
+        }
+        return manager.activeTerminalStatusText
+    }
+    
+    private var isInstalling: Bool {
+        effectiveStatusText.localizedCaseInsensitiveContains("install") ||
+        effectiveStatusText.localizedCaseInsensitiveContains("npm") ||
+        effectiveStatusText.localizedCaseInsensitiveContains("brew") ||
+        effectiveStatusText.localizedCaseInsensitiveContains("pip")
+    }
+    
     var body: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                Image(systemName: "terminal.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [.green, .teal],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
             
-            Text("Accessing File System & Running Command...")
+            Image(systemName: isInstalling ? "arrow.down.circle.fill" : "terminal.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: isInstalling ? [.teal, .green] : [.green, .teal],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            
+            Text(effectiveStatusText)
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
                 .opacity(blinkOpacity)
                 .onAppear {
                     withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
@@ -7540,6 +8653,7 @@ struct TerminalExecutingView: View {
                     }
                 }
         }
+        .padding(.bottom, 6)
     }
 }
 
@@ -8360,6 +9474,7 @@ private struct CustomSkillEditorView: View {
     @State private var summary: String
     @State private var instructions: String
     @State private var isEnabled: Bool
+    @State private var isSaving: Bool = false
 
     init(initialSkill: CustomSkill, isNew: Bool, canDelete: Bool = true, onSave: @escaping (CustomSkill) -> Void, onDelete: @escaping (UUID) -> Void) {
         self.initialSkill = initialSkill
@@ -8447,7 +9562,9 @@ private struct CustomSkillEditorView: View {
                 }
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Save skill") {
+                Button(isSaving ? (isNew ? "Creating…" : "Saving…") : (isNew ? "Create skill" : "Save skill")) {
+                    guard !isSaving else { return }
+                    isSaving = true
                     onSave(CustomSkill(
                         id: initialSkill.id,
                         name: name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -8459,7 +9576,7 @@ private struct CustomSkillEditorView: View {
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!isValid)
+                .disabled(isSaving || !isValid)
                 .keyboardShortcut(.defaultAction)
             }
         }
@@ -8542,6 +9659,7 @@ struct MemoryGraphView: View {
     @State private var newEdgeLabel: String = "likes"
     @State private var searchFilter: String = ""
     @State private var showResetMemoryAlert: Bool = false
+    @State private var isAddingNode: Bool = false
     
     let categoryOptions = ["user", "project", "interest", "health", "info", "personality"]
     
@@ -8932,7 +10050,9 @@ struct MemoryGraphView: View {
                     }
                     .keyboardShortcut(.cancelAction)
                     
-                    Button("Add to Memory") {
+                    Button(isAddingNode ? "Adding…" : "Add to Memory") {
+                        guard !isAddingNode else { return }
+                        isAddingNode = true
                         manager.addManualMemoryNode(
                             label: newLabel,
                             category: newCategory,
@@ -8942,9 +10062,10 @@ struct MemoryGraphView: View {
                         )
                         newLabel = ""
                         showAddNodeSheet = false
+                        isAddingNode = false
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(newLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(isAddingNode || newLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .keyboardShortcut(.defaultAction)
                 }
                 .padding(.top, 8)
@@ -9519,10 +10640,19 @@ struct ApiLibraryModal: View {
             icon: "dollarsign.circle.fill",
             iconColor: .green,
             promptDirective: "\n[ACTIVE API TOOL: AlphaVantage Finance]: AlphaVantage Financial API active (Endpoint: https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=<TICKER>). Analyze ticker symbols, stock performance, and financial data."
+        ),
+        ApiItem(
+            id: "apple_notes_api",
+            name: "Apple Notes macOS Integration",
+            description: "Direct native connection to Apple Notes. Create, read, search, append, and organize notes and folders without leaving the conversation.",
+            category: "macOS Integrations",
+            icon: "note.text",
+            iconColor: .yellow,
+            promptDirective: "\n[ACTIVE API TOOL: Apple Notes]: Native Apple Notes access active. Use `apple_notes(action,title,content,folder,query,noteId)` with actions `list`, `search`, `read`, `create`, `append`, `folders`, `delete`, `show`."
         )
     ]
     
-    let categories = ["All", "Data & Weather", "Developer", "Finance", "Knowledge", "Media", "Research"]
+    let categories = ["All", "macOS Integrations", "Data & Weather", "Developer", "Finance", "Knowledge", "Media", "Research"]
     
     var filteredItems: [ApiItem] {
         libraryItems.filter { item in
@@ -9983,5 +11113,60 @@ final class SpeechDictationManager: NSObject, SFSpeechRecognizerDelegate {
         recognitionRequest = nil
         recognitionTask = nil
         isDictating = false
+    }
+}
+
+// MARK: - Attached File Preview Popover
+
+struct AttachedFilePreviewPopover: View {
+    let file: AttachedFile
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: file.isPDF ? "doc.richtext.fill" : "doc.text.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(file.isPDF ? Color.red : Color.blue)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(file.name)
+                        .font(.system(size: 13, weight: .bold))
+                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        if let pageCount = file.pageCount {
+                            Text("\(pageCount) pages •")
+                        }
+                        Text(ByteCountFormatter.string(fromByteCount: file.fileSize, countStyle: .file))
+                        Text("• \(file.fileExtension.uppercased())")
+                    }
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(.bottom, 4)
+            
+            Divider()
+            
+            if let content = file.textContent, !content.isEmpty {
+                ScrollView {
+                    Text(content)
+                        .font(.system(size: 11, design: .monospaced))
+                        .lineSpacing(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(6)
+                }
+                .frame(maxHeight: 220)
+                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
+            } else {
+                Text("No text content available for preview.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+            }
+        }
+        .padding(14)
+        .frame(width: 320)
     }
 }

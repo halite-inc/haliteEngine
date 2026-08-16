@@ -6,6 +6,38 @@ public enum ChatRole: String, Codable {
     case system
 }
 
+public struct AttachedFile: Codable, Identifiable, Hashable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var fileExtension: String
+    public var fileSize: Int64
+    public var mimeType: String
+    public var textContent: String?
+    public var pageCount: Int?
+    
+    public var isPDF: Bool {
+        fileExtension.lowercased() == "pdf"
+    }
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        fileExtension: String,
+        fileSize: Int64,
+        mimeType: String,
+        textContent: String? = nil,
+        pageCount: Int? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.fileExtension = fileExtension
+        self.fileSize = fileSize
+        self.mimeType = mimeType
+        self.textContent = textContent
+        self.pageCount = pageCount
+    }
+}
+
 public struct ChatMessage: Codable, Identifiable {
     public var id: UUID
     public var role: ChatRole
@@ -13,18 +45,27 @@ public struct ChatMessage: Codable, Identifiable {
     public var timestamp: Date
     public var attachedImageBase64: String?
     public var attachmentID: UUID?
+    public var attachedFiles: [AttachedFile]?
     
     public var generationStartTime: Date?
     public var generationEndTime: Date?
-
     
-    public init(id: UUID = UUID(), role: ChatRole, text: String, timestamp: Date = Date(), attachedImageBase64: String? = nil, attachmentID: UUID? = nil) {
+    public init(
+        id: UUID = UUID(),
+        role: ChatRole,
+        text: String,
+        timestamp: Date = Date(),
+        attachedImageBase64: String? = nil,
+        attachmentID: UUID? = nil,
+        attachedFiles: [AttachedFile]? = nil
+    ) {
         self.id = id
         self.role = role
         self.text = text
         self.timestamp = timestamp
         self.attachedImageBase64 = attachedImageBase64
         self.attachmentID = attachmentID
+        self.attachedFiles = attachedFiles
     }
 }
 
@@ -50,6 +91,7 @@ public struct UserTask: Codable, Identifiable, Hashable {
 
 public enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
     case lmStudio = "lmstudio"
+    case mlx = "mlx"
     case gemini = "gemini"
     case openRouter = "openrouter"
     case openAI = "openai"
@@ -59,6 +101,7 @@ public enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
     public var displayName: String {
         switch self {
         case .lmStudio: return "LM Studio Server"
+        case .mlx: return "Apple MLX (Native Metal)"
         case .gemini: return "Gemini API"
         case .openRouter: return "OpenRouter API"
         case .openAI: return "ChatGPT (OpenAI)"
@@ -68,6 +111,7 @@ public enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
     public var shortDisplayName: String {
         switch self {
         case .lmStudio: return "LM Studio"
+        case .mlx: return "Apple MLX"
         case .gemini: return "Gemini"
         case .openRouter: return "OpenRouter"
         case .openAI: return "ChatGPT"
@@ -129,6 +173,7 @@ public struct ChatThread: Codable, Identifiable {
     public var systemInstructions: String
     public var temperature: Double
     public var lmStudioModelId: String?
+    public var mlxModelId: String?
     public var geminiModelId: String?
     public var openRouterModelId: String?
     public var openAIModelId: String?
@@ -149,6 +194,7 @@ public struct ChatThread: Codable, Identifiable {
         systemInstructions: String = ChatPersona.presets[0].instructions,
         temperature: Double = ChatPersona.presets[0].temperature,
         lmStudioModelId: String? = nil,
+        mlxModelId: String? = nil,
         geminiModelId: String? = "gemini-2.5-flash",
         openRouterModelId: String? = "google/gemini-2.0-flash-001",
         openAIModelId: String? = "gpt-4o",
@@ -167,6 +213,7 @@ public struct ChatThread: Codable, Identifiable {
         self.systemInstructions = systemInstructions
         self.temperature = min(max(temperature, 0), 1)
         self.lmStudioModelId = lmStudioModelId
+        self.mlxModelId = mlxModelId
         self.geminiModelId = geminiModelId
         self.openRouterModelId = openRouterModelId
         self.openAIModelId = openAIModelId
@@ -182,7 +229,7 @@ public struct ChatThread: Codable, Identifiable {
     
     // Custom Decodable implementation for backward compatibility
     enum CodingKeys: String, CodingKey {
-        case id, title, provider, systemInstructions, temperature, lmStudioModelId, geminiModelId, openRouterModelId, openAIModelId, messages, createdAt, isToolUseEnabled, showSystemMessages, chatMemory, memoryNodes, memoryEdges, isolatesContext
+        case id, title, provider, systemInstructions, temperature, lmStudioModelId, mlxModelId, geminiModelId, openRouterModelId, openAIModelId, messages, createdAt, isToolUseEnabled, showSystemMessages, chatMemory, memoryNodes, memoryEdges, isolatesContext
     }
     
     public init(from decoder: Decoder) throws {
@@ -193,6 +240,7 @@ public struct ChatThread: Codable, Identifiable {
         systemInstructions = try container.decode(String.self, forKey: .systemInstructions)
         temperature = min(max(try container.decode(Double.self, forKey: .temperature), 0), 1)
         lmStudioModelId = try container.decodeIfPresent(String.self, forKey: .lmStudioModelId)
+        mlxModelId = try container.decodeIfPresent(String.self, forKey: .mlxModelId)
         geminiModelId = try container.decodeIfPresent(String.self, forKey: .geminiModelId) ?? "gemini-2.5-flash"
         openRouterModelId = try container.decodeIfPresent(String.self, forKey: .openRouterModelId) ?? "google/gemini-2.0-flash-001"
         openAIModelId = try container.decodeIfPresent(String.self, forKey: .openAIModelId) ?? "gpt-4o"
@@ -204,6 +252,16 @@ public struct ChatThread: Codable, Identifiable {
         memoryNodes = try container.decodeIfPresent([MemoryNode].self, forKey: .memoryNodes) ?? []
         memoryEdges = try container.decodeIfPresent([MemoryEdge].self, forKey: .memoryEdges) ?? []
         isolatesContext = try container.decodeIfPresent(Bool.self, forKey: .isolatesContext) ?? false
+    }
+    
+    public var activeModelName: String {
+        switch provider {
+        case .gemini: return geminiModelId ?? "gemini-2.5-flash"
+        case .openRouter: return openRouterModelId ?? "google/gemini-2.0-flash-001"
+        case .openAI: return openAIModelId ?? "gpt-4o"
+        case .lmStudio: return lmStudioModelId ?? "LM Studio local model"
+        case .mlx: return mlxModelId ?? "Apple MLX local model"
+        }
     }
 }
 

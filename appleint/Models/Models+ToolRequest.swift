@@ -161,6 +161,8 @@ public struct ToolRequest: Codable, Identifiable {
     public var mcpServer: String? // Target MCP server name
     public var mcpTool: String? // Target MCP tool name
     public var mcpArguments: [String: AgentValue]? // Arguments for MCP tool call
+    public var folder: String? // for apple_notes (target folder name)
+    public var noteId: String? // for apple_notes (target note ID)
     
     public var displayTitle: String {
         if type == "file_system" || title == "File System & Terminal Access" || title == "filesystem fetched" || title == "filesystem used" || title == "terminal used" {
@@ -170,6 +172,12 @@ public struct ToolRequest: Codable, Identifiable {
             return "updated memory"
         }
         if type == "learning" { return "updated learning" }
+        if type == "apple_notes" {
+            if let action = action, !action.isEmpty {
+                return "Notes: \(action)"
+            }
+            return "Apple Notes"
+        }
         if type == "mcp" {
             let toolName = mcpTool ?? title
             return "MCP: \(toolName)"
@@ -190,7 +198,7 @@ public struct ToolRequest: Codable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case type, title, description, fields, displayMode, html, query, queries, nodes, edges, action, path, content, command, files, taskId, dueDate, isCompleted, groupName, position, learningId, learningKind, learningTopic, mcpServer, mcpTool, mcpArguments
+        case type, title, description, fields, displayMode, html, query, queries, nodes, edges, action, path, content, command, files, taskId, dueDate, isCompleted, groupName, position, learningId, learningKind, learningTopic, mcpServer, mcpTool, mcpArguments, folder, noteId
     }
 
     public init(from decoder: Decoder) throws {
@@ -206,6 +214,7 @@ public struct ToolRequest: Codable, Identifiable {
             case "internet_use": return "Internet Search"
             case "file_system": return "File System Access"
             case "tesaract": return "Interactive Visualizer"
+            case "apple_notes": return "Apple Notes"
             case "mcp": return "MCP Tool"
             default: return "Tool Request"
             }
@@ -235,9 +244,11 @@ public struct ToolRequest: Codable, Identifiable {
         mcpServer = try container.decodeIfPresent(String.self, forKey: .mcpServer)
         mcpTool = try container.decodeIfPresent(String.self, forKey: .mcpTool)
         mcpArguments = try container.decodeIfPresent([String: AgentValue].self, forKey: .mcpArguments)
+        folder = try container.decodeIfPresent(String.self, forKey: .folder)
+        noteId = try container.decodeIfPresent(String.self, forKey: .noteId)
     }
 
-    public init(type: String?, title: String, description: String, fields: [ToolField], displayMode: String? = nil, html: String? = nil, query: String? = nil, queries: [String]? = nil, nodes: [MemoryNode]? = nil, edges: [MemoryEdge]? = nil, action: String? = nil, path: String? = nil, content: String? = nil, command: String? = nil, files: [GeneratedFile]? = nil, taskId: UUID? = nil, dueDate: String? = nil, isCompleted: Bool? = nil, groupName: String? = nil, position: Int? = nil, learningId: String? = nil, learningKind: String? = nil, learningTopic: String? = nil, mcpServer: String? = nil, mcpTool: String? = nil, mcpArguments: [String: AgentValue]? = nil) {
+    public init(type: String?, title: String, description: String, fields: [ToolField], displayMode: String? = nil, html: String? = nil, query: String? = nil, queries: [String]? = nil, nodes: [MemoryNode]? = nil, edges: [MemoryEdge]? = nil, action: String? = nil, path: String? = nil, content: String? = nil, command: String? = nil, files: [GeneratedFile]? = nil, taskId: UUID? = nil, dueDate: String? = nil, isCompleted: Bool? = nil, groupName: String? = nil, position: Int? = nil, learningId: String? = nil, learningKind: String? = nil, learningTopic: String? = nil, mcpServer: String? = nil, mcpTool: String? = nil, mcpArguments: [String: AgentValue]? = nil, folder: String? = nil, noteId: String? = nil) {
         self.type = type
         self.title = title
         self.description = description
@@ -264,6 +275,8 @@ public struct ToolRequest: Codable, Identifiable {
         self.mcpServer = mcpServer
         self.mcpTool = mcpTool
         self.mcpArguments = mcpArguments
+        self.folder = folder
+        self.noteId = noteId
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -294,6 +307,8 @@ public struct ToolRequest: Codable, Identifiable {
         try container.encodeIfPresent(mcpServer, forKey: .mcpServer)
         try container.encodeIfPresent(mcpTool, forKey: .mcpTool)
         try container.encodeIfPresent(mcpArguments, forKey: .mcpArguments)
+        try container.encodeIfPresent(folder, forKey: .folder)
+        try container.encodeIfPresent(noteId, forKey: .noteId)
     }
 }
 
@@ -398,47 +413,138 @@ public struct ToolRequestParser {
         )
     }
 
-    /// Some models follow the compact tool signature shown in their prompt and emit
-    /// `internet_use("query")` instead of a JSON/native tool envelope. Accept only a
-    /// complete, quoted function call so ordinary prose or documentation examples
-    /// cannot accidentally trigger a search.
+    /// Some models follow the compact tool signature shown in their prompt or special model tokens
+    /// and emit `[internet_use(query='...', description='...')]` or `<|tool_call_start|>[...]<|tool_call_end|>`
+    /// instead of a JSON envelope. Parse keyword and positional arguments into a validated ToolRequest.
     private static func parseFunctionStyleToolCall(_ text: String) -> ToolRequest? {
-        let pattern = #"(?is)^\s*(internet_use|web_search)\s*\(\s*(?:query\s*[:=]\s*)?(["'])(.*?)\2\s*\)\s*$"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-              let quoteRange = Range(match.range(at: 2), in: text),
-              let queryRange = Range(match.range(at: 3), in: text) else { return nil }
-
-        let rawQuery = String(text[queryRange])
-        let query: String
-        if text[quoteRange.lowerBound] == "\"",
-           let wrapped = ("\"" + rawQuery + "\"").data(using: .utf8),
-           let decoded = try? JSONSerialization.jsonObject(with: wrapped) as? String {
-            query = decoded
-        } else {
-            query = rawQuery
-                .replacingOccurrences(of: #"\'"#, with: "'")
-                .replacingOccurrences(of: #"\\"#, with: #"\"#)
+        var unbracketed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if unbracketed.hasPrefix("<|tool_call_start|>") {
+            unbracketed = String(unbracketed.dropFirst("<|tool_call_start|>".count))
+        }
+        if unbracketed.hasSuffix("<|tool_call_end|>") {
+            unbracketed = String(unbracketed.dropLast("<|tool_call_end|>".count))
+        }
+        unbracketed = unbracketed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if unbracketed.hasPrefix("[") && unbracketed.hasSuffix("]") {
+            unbracketed = String(unbracketed.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanQuery.isEmpty else { return nil }
-        return ToolRequest(
-            type: "internet_use",
-            title: "Searching the web",
-            description: "Retrieving current information",
-            fields: [],
-            query: cleanQuery
-        )
+        // Pattern for tool_name(args...)
+        let pattern = #"(?is)^\s*([a-zA-Z0-9_-]+)\s*\(\s*(.*?)\s*\)\s*$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: unbracketed, range: NSRange(unbracketed.startIndex..., in: unbracketed)),
+              let nameRange = Range(match.range(at: 1), in: unbracketed),
+              let argsRange = Range(match.range(at: 2), in: unbracketed) else { return nil }
+
+        let toolName = String(unbracketed[nameRange]).lowercased()
+        let rawArgs = String(unbracketed[argsRange])
+        let kwargs = parsePythonKwargs(rawArgs)
+
+        if toolName == "internet_use" || toolName == "web_search" {
+            let query = kwargs["query"] ?? kwargs["q"] ?? kwargs["search_query"] ?? kwargs["_positional"] ?? ""
+            let cleanQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanQuery.isEmpty else { return nil }
+            return ToolRequest(
+                type: "internet_use",
+                title: kwargs["title"] ?? "Searching the web",
+                description: kwargs["description"] ?? "Retrieving current information",
+                fields: [],
+                query: cleanQuery
+            )
+        } else if toolName == "file_system" || toolName == "terminal" || toolName == "execute_command" {
+            let action = kwargs["action"] ?? "execute_command"
+            let cmd = kwargs["command"] ?? kwargs["cmd"] ?? kwargs["_positional"]
+            return ToolRequest(
+                type: "file_system",
+                title: "terminal used",
+                description: kwargs["description"] ?? "Executing local file system action...",
+                fields: [],
+                action: action,
+                path: kwargs["path"] ?? kwargs["file_path"],
+                content: kwargs["content"],
+                command: cmd
+            )
+        } else if toolName == "task_management" {
+            let action = kwargs["action"] ?? "create"
+            let title = kwargs["title"] ?? kwargs["groupname"] ?? kwargs["_positional"] ?? "Task action"
+            return ToolRequest(
+                type: "task_management",
+                title: title,
+                description: kwargs["description"] ?? "",
+                fields: [],
+                action: action,
+                taskId: kwargs["taskid"].flatMap(UUID.init(uuidString:)),
+                dueDate: kwargs["duedate"],
+                groupName: kwargs["groupname"]
+            )
+        } else if toolName == "apple_notes" {
+            let action = kwargs["action"] ?? "create_note"
+            let title = kwargs["title"] ?? kwargs["name"] ?? "Apple Notes"
+            return ToolRequest(
+                type: "apple_notes",
+                title: title,
+                description: kwargs["description"] ?? "",
+                fields: [],
+                query: kwargs["query"] ?? kwargs["_positional"],
+                action: action,
+                content: kwargs["content"],
+                folder: kwargs["folder"],
+                noteId: kwargs["noteid"] ?? kwargs["id"]
+            )
+        }
+
+        return nil
+    }
+
+    private static func parsePythonKwargs(_ rawArgs: String) -> [String: String] {
+        var result: [String: String] = [:]
+        let trimmed = rawArgs.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return result }
+
+        // 1. Check if it is a single quoted or unquoted string (positional argument)
+        let posPattern = #"^\s*(['"])(.*?)\1\s*$"#
+        if let regex = try? NSRegularExpression(pattern: posPattern),
+           let match = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+           let valRange = Range(match.range(at: 2), in: trimmed) {
+            let val = String(trimmed[valRange])
+                .replacingOccurrences(of: #"\'"#, with: "'")
+                .replacingOccurrences(of: #"\""#, with: "\"")
+            result["_positional"] = val
+            return result
+        }
+
+        // 2. Parse key=value pairs
+        let pattern = #"(?is)(?:^|,\s*)([a-zA-Z0-9_]+)\s*[:=]\s*(?:(['"])(.*?)\2|\[(.*?)\]|\{(.*?)\}|([^,]+))"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return result }
+        let matches = regex.matches(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed))
+        
+        for match in matches {
+            guard let keyRange = Range(match.range(at: 1), in: trimmed) else { continue }
+            let key = String(trimmed[keyRange]).lowercased()
+            
+            if match.range(at: 3).location != NSNotFound, let valRange = Range(match.range(at: 3), in: trimmed) {
+                var val = String(trimmed[valRange])
+                val = val.replacingOccurrences(of: #"\'"#, with: "'")
+                         .replacingOccurrences(of: #"\""#, with: "\"")
+                         .replacingOccurrences(of: #"\\"#, with: "\\")
+                result[key] = val
+            } else if match.range(at: 6).location != NSNotFound, let valRange = Range(match.range(at: 6), in: trimmed) {
+                let val = String(trimmed[valRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if val != "[]" && val != "{}" && val != "None" && val != "null" {
+                    result[key] = val
+                }
+            }
+        }
+        return result
     }
 
     /// Gemma, Qwen, Hermès, Llama, and local OpenAI-compatible models emit tool calls using
-    /// `<|tool_call|>call:file_system{...}<tool_call|>` or `<|tool_call|>call:tool_6{...}<|tool_call|>`
+    /// `<|tool_call|>call:file_system{...}<tool_call|>` or `<|tool_call_start|>[...]<|tool_call_end|>`
     /// instead of a standalone JSON response. Normalize all native tool calls so they use the
     /// same execution path as cloud-model JSON calls.
     private static func parseNativeToolCall(text: String) -> ToolRequest? {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard cleaned.contains("<|tool_call|>") || cleaned.contains("<|tool_call>") || cleaned.contains("<tool_call>") || cleaned.contains("call:") else {
+        guard cleaned.contains("<|tool_call|>") || cleaned.contains("<|tool_call>") || cleaned.contains("<tool_call>") || cleaned.contains("call:") || cleaned.contains("<|tool_call_start|>") else {
             return nil
         }
 
@@ -448,10 +554,13 @@ public struct ToolRequestParser {
             return xmlRequest
         }
         
-        // Isolate the tool call block after <|tool_call|>, <tool_call>, or call:
+        // Isolate the tool call block after <|tool_call_start|>, <|tool_call|>, <tool_call>, or call:
         var toolCallSub: String = cleaned
-        if let callRange = cleaned.range(of: "<|tool_call|>") ?? cleaned.range(of: "<|tool_call>") ?? cleaned.range(of: "<tool_call>") ?? cleaned.range(of: "call:") {
+        if let callRange = cleaned.range(of: "<|tool_call_start|>") ?? cleaned.range(of: "<|tool_call|>") ?? cleaned.range(of: "<|tool_call>") ?? cleaned.range(of: "<tool_call>") ?? cleaned.range(of: "call:") {
             toolCallSub = String(cleaned[callRange.upperBound...])
+            if let endRange = toolCallSub.range(of: "<|tool_call_end|>") ?? toolCallSub.range(of: "</tool_call>") ?? toolCallSub.range(of: "<|tool_call|>") {
+                toolCallSub = String(toolCallSub[..<endRange.lowerBound])
+            }
         }
         
         // Find inner JSON object { ... } within the tool call section
@@ -804,7 +913,7 @@ public struct ToolRequestParser {
             do {
                 let decoder = JSONDecoder()
                 let request = try decoder.decode(ToolRequest.self, from: jsonData)
-                if !request.fields.isEmpty || request.type == "tesaract" || request.type == "internet_use" || request.type == "advanced_memory" || request.type == "file_system" || request.type == "task_management" {
+                if !request.fields.isEmpty || request.type == "tesaract" || request.type == "internet_use" || request.type == "advanced_memory" || request.type == "file_system" || request.type == "task_management" || request.type == "apple_notes" {
                     return request
                 }
             } catch {
@@ -823,7 +932,8 @@ public struct ToolRequestParser {
         let supportedEnvelopeNames = [
             "request_input", "dynamic_input", "dynamic_insights", "tesaract", "tesseract",
             "internet_use", "web_search", "advanced_memory", "memory", "file_system",
-            "filesystem", "terminal_access", "task_management", "learning"
+            "filesystem", "terminal_access", "task_management", "learning",
+            "apple_notes", "notes", "apple_notes_api", "notes_app"
         ]
         let keyedEnvelope = raw.first { key, value in
             let normalized = key.lowercased().replacingOccurrences(of: "-", with: "_")
@@ -849,6 +959,8 @@ public struct ToolRequestParser {
             type = "advanced_memory"
         } else if name.contains("file_system") || name.contains("filesystem") || name.contains("terminal_access") || name == "tool_6" {
             type = "file_system"
+        } else if name.contains("apple_notes") || name.contains("notes_app") || name == "notes" || name == "apple_notes_api" {
+            type = "apple_notes"
         } else if name.contains("task_management") || name == "tool_7" {
             type = "task_management"
         } else if name == "learning" {
@@ -922,6 +1034,7 @@ public struct ToolRequestParser {
             "internet_use",
             "advanced_memory",
             "file_system",
+            "apple_notes",
             "task_management",
             "learning",
             "mcp"
@@ -1151,6 +1264,12 @@ extension ChatMessage {
             (isStreamingJSON || normalized.contains("<|tool_call|>") || normalized.contains("<tool_call>"))
     }
 
+    public var isStreamingAppleNotesJSON: Bool {
+        let normalized = text.lowercased()
+        return (normalized.contains("apple_notes") || normalized.contains("notes_app")) &&
+            (isStreamingJSON || normalized.contains("<|tool_call|>") || normalized.contains("<tool_call>"))
+    }
+
     public var isStreamingTaskJSON: Bool {
         let normalized = text.lowercased()
         return (normalized.contains("task_management") || normalized.contains("tasks_management") || normalized.contains("tool_7")) &&
@@ -1212,14 +1331,22 @@ extension ChatMessage {
         // user-facing prose. Their parsed ToolRequest still executes from the
         // original message text; hide the transport syntax in the bubble.
         raw = raw.replacingOccurrences(
+            of: #"<\|tool_call_start\|>.*?<\|tool_call_end\|>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        raw = raw.replacingOccurrences(
             of: #"<\|tool_call\|>.*?<\|tool_call\|>"#,
             with: "",
             options: [.regularExpression, .caseInsensitive]
         )
-        // Some local chat templates use an asymmetric pair:
-        // `<|tool_call>...<tool_call|>`. Strip it before Markdown rendering.
         raw = raw.replacingOccurrences(
             of: #"<\|tool_call>.*?<tool_call\|>"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        raw = raw.replacingOccurrences(
+            of: #"<tool_call>.*?</tool_call>"#,
             with: "",
             options: [.regularExpression, .caseInsensitive]
         )
@@ -1233,6 +1360,9 @@ extension ChatMessage {
         // During streaming the closing marker has not arrived yet. Remove the
         // incomplete transport tail immediately so it can never flash as chat
         // text while the tool-call JSON is still being assembled.
+        if let start = raw.range(of: "<|tool_call_start|>") {
+            raw.removeSubrange(start.lowerBound..<raw.endIndex)
+        }
         if let start = raw.range(of: "<|tool_call|>") {
             raw.removeSubrange(start.lowerBound..<raw.endIndex)
         }
@@ -1552,8 +1682,10 @@ JSON SPECIFICATION:
   "type": "internet_use",
   "title": "Internet Search",
   "description": "Searching the web...",
-  "query": "search query here"
+  "query": "concise keyword search query (e.g. 'ChatGPT 4o benchmarks 2026')",
+  "queries": ["query for entity 1", "query for entity 2"]
 }
+(You can supply either a single 'query' or an array of 'queries' to search multiple entities concurrently. You may also emit subsequent internet_use calls if needed for additional comparison evidence.)
 
 4. For Tool 5 (advanced_memory):
 {

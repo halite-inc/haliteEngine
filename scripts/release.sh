@@ -42,7 +42,7 @@ fi
 
 # 2. Build Release binary with Xcode
 echo "🔨 Building Release application binary with xcodebuild..."
-xcodebuild -project appleint.xcodeproj -scheme appleint -configuration Release -destination "platform=macOS" -derivedDataPath build/DerivedData clean build -quiet
+xcodebuild -project appleint.xcodeproj -scheme appleint -configuration Release -destination "platform=macOS" -derivedDataPath build/DerivedData -skipPackagePluginValidation -skipMacroValidation clean build -quiet
 
 # 3. Create DMG and ZIP distribution packages
 echo "📦 Packaging Halite.dmg and Halite-macos.zip..."

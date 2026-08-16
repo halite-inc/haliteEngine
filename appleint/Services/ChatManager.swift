@@ -62,6 +62,7 @@ public final class ChatManager {
         case "internet_search": readableName = "Research current sources"
         case "file_system": readableName = "Run terminal or file action"
         case "learning": readableName = "Save verified learning"
+        case "apple_notes": readableName = "Apple Notes"
         default: readableName = call.name.replacingOccurrences(of: "_", with: " ").capitalized
         }
         if case .string(let action)? = call.arguments["action"], !action.isEmpty {
@@ -71,12 +72,10 @@ public final class ChatManager {
     }
 
     private func beginUltraToolTask(_ call: AgentToolCall, threadId: UUID) {
-        // If the model discovers that a seemingly simple request actually
-        // needs multiple actions, let that behavior activate tracking too.
-        // This keeps the decision autonomous without showing a manual mode.
+        // Track task progress only when genuinely multi-agent / multi-action workflows execute
         if ultraTaskRuns[threadId] == nil,
            let agentRun = controller(for: threadId).activeRun,
-           agentRun.stepCount > 1 {
+           agentRun.completedToolCalls.count >= 1 {
             let completedActions = agentRun.completedToolCalls.map { execution in
                 UltraTaskItem(
                     id: execution.call.id,
@@ -84,11 +83,10 @@ public final class ChatManager {
                     status: .completed
                 )
             }
-            ultraTaskRuns[threadId] = UltraTaskRun(goal: agentRun.userGoal, items: [
-                UltraTaskItem(title: "Plan the requested work", status: .completed)
-            ] + completedActions + [
-                UltraTaskItem(title: "Verify and present the complete result")
+            ultraTaskRuns[threadId] = UltraTaskRun(goal: agentRun.userGoal, items: completedActions + [
+                UltraTaskItem(id: call.id, title: ultraToolTitle(call), status: .inProgress)
             ])
+            return
         }
         guard var run = ultraTaskRuns[threadId] else { return }
         if let index = run.items.firstIndex(where: { $0.title == "Plan the requested work" }) {
@@ -97,7 +95,7 @@ public final class ChatManager {
         if !run.items.contains(where: { $0.id == call.id }) {
             run.items.insert(
                 UltraTaskItem(id: call.id, title: ultraToolTitle(call), status: .inProgress),
-                at: max(1, run.items.count - 1)
+                at: max(0, run.items.count)
             )
         }
         ultraTaskRuns[threadId] = run
@@ -156,7 +154,88 @@ public final class ChatManager {
     public var taskGroups: [String] = [] { didSet { preferences.set(taskGroups, forKey: "AppleIntTaskGroups") } }
     public var terminalCurrentDirectory: String
     public var isTerminalCommandRunning: Bool = false
+    public var activeTerminalCommand: String? = nil
+    public var activeTerminalStatusText: String = "Accessing File System & Running Command…"
     private var fileReadCache: [String: (modifiedAt: Date, content: String)] = [:]
+    
+    public static func terminalCommandStatusText(for command: String) -> String {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if trimmed.contains("npm i") || trimmed.contains("npm install") || trimmed.contains("npx ") {
+            return "Installing npm dependencies in terminal…"
+        } else if trimmed.contains("brew install") || trimmed.contains("brew reinstall") || trimmed.contains("brew cask") {
+            return "Installing packages via Homebrew…"
+        } else if trimmed.contains("pip install") || trimmed.contains("pip3 install") {
+            return "Installing Python packages with pip…"
+        } else if trimmed.contains("yarn add") || trimmed.contains("yarn install") {
+            return "Installing Yarn packages in terminal…"
+        } else if trimmed.contains("cargo install") || trimmed.contains("cargo build") {
+            return "Building & installing with Cargo…"
+        } else if trimmed.contains("gem install") {
+            return "Installing Ruby gems in terminal…"
+        } else if trimmed.contains("pod install") || trimmed.contains("pod update") {
+            return "Installing CocoaPods dependencies…"
+        } else if trimmed.contains("git clone") {
+            return "Cloning git repository in terminal…"
+        } else if trimmed.contains("curl ") || trimmed.contains("wget ") {
+            return "Downloading files in terminal…"
+        } else {
+            return "Running terminal command: \(command.prefix(40))…"
+        }
+    }
+    
+    nonisolated public static func cleanTerminalOutput(_ raw: String) -> String {
+        guard !raw.isEmpty else { return "" }
+        
+        var text = raw
+        // Strip standard ANSI CSI / OSC sequences (colors, cursor positions, erase line/display)
+        let ansiPattern = #"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])|\x9B[0-?]*[ -/]*[@-~]"#
+        text = text.replacingOccurrences(of: ansiPattern, with: "", options: .regularExpression)
+        
+        // Strip stray unescaped cursor movement / clear line codes (e.g. [1G[J, [2K, [?25h, [?25l)
+        let strayAnsiPattern = #"\[\d+[A-Za-z]|\[\?[0-9]+[a-zA-Z]|\[[0-9;]*[JjKkGgHh]"#
+        text = text.replacingOccurrences(of: strayAnsiPattern, with: "", options: .regularExpression)
+        
+        text = text.replacingOccurrences(of: "\r\n", with: "\n")
+        
+        // Process carriage returns (\r): overwrites the current line in place (emulating terminal buffer)
+        var cleanLines: [String] = []
+        let rawLines = text.components(separatedBy: "\n")
+        for line in rawLines {
+            if line.contains("\r") {
+                let segments = line.components(separatedBy: "\r").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                if let lastSegment = segments.last {
+                    cleanLines.append(lastSegment)
+                }
+            } else {
+                cleanLines.append(line)
+            }
+        }
+        
+        // Deduplicate repetitive progress / spinner lines in terminal output
+        var deduplicatedLines: [String] = []
+        for line in cleanLines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                if deduplicatedLines.last?.trimmingCharacters(in: .whitespaces).isEmpty != true {
+                    deduplicatedLines.append(line)
+                }
+                continue
+            }
+            
+            if let last = deduplicatedLines.last {
+                let lastTrimmed = last.trimmingCharacters(in: .whitespaces)
+                let strippedCurrent = trimmed.replacingOccurrences(of: #"\.+$"#, with: "", options: .regularExpression)
+                let strippedLast = lastTrimmed.replacingOccurrences(of: #"\.+$"#, with: "", options: .regularExpression)
+                if strippedCurrent == strippedLast && strippedCurrent.count > 5 {
+                    deduplicatedLines[deduplicatedLines.count - 1] = line
+                    continue
+                }
+            }
+            deduplicatedLines.append(line)
+        }
+        
+        return deduplicatedLines.joined(separator: "\n").trimmingCharacters(in: .newlines)
+    }
     
     public struct TerminalLogEntry: Identifiable {
         public let id: UUID
@@ -219,16 +298,19 @@ public final class ChatManager {
         } else {
             currentOutput += chunk
         }
+        let cleaned = Self.cleanTerminalOutput(currentOutput)
         // Keep output bounded to prevent unbounded memory growth while streaming large outputs
-        if currentOutput.count > 40_000 {
-            currentOutput = String(currentOutput.suffix(40_000))
+        if cleaned.count > 40_000 {
+            terminalLogs[index].output = String(cleaned.suffix(40_000))
+        } else {
+            terminalLogs[index].output = cleaned
         }
-        terminalLogs[index].output = currentOutput
     }
 
     public func finalizeLiveTerminalLog(id: UUID, finalOutput: String, exitCode: Int32, finalDirectory: String) {
         guard let index = terminalLogs.firstIndex(where: { $0.id == id }) else { return }
-        terminalLogs[index].output = finalOutput
+        let cleaned = Self.cleanTerminalOutput(finalOutput)
+        terminalLogs[index].output = cleaned.isEmpty ? "(No output)" : cleaned
         terminalLogs[index].exitCode = exitCode
         terminalLogs[index].isError = exitCode != 0
         saveTerminalAudit(entry: terminalLogs[index])
@@ -341,10 +423,11 @@ public final class ChatManager {
         messageId: UUID,
         text: String,
         attachedImageBase64: String?,
+        attachedFiles: [AttachedFile]? = nil,
         forceWebSearch: Bool = false
     ) async {
         let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanText.isEmpty,
+        guard !cleanText.isEmpty || attachedImageBase64 != nil || (attachedFiles != nil && !attachedFiles!.isEmpty),
               let threadIndex = threads.firstIndex(where: { $0.id == threadId }),
               let messageIndex = threads[threadIndex].messages.firstIndex(where: { $0.id == messageId }),
               Self.isVisibleUserPrompt(threads[threadIndex].messages[messageIndex])
@@ -356,6 +439,8 @@ public final class ChatManager {
             replacementText: cleanText,
             replacementImage: attachedImageBase64,
             replacesImage: true,
+            replacementFiles: attachedFiles,
+            replacesFiles: true,
             forceWebSearch: forceWebSearch
         )
     }
@@ -375,6 +460,8 @@ public final class ChatManager {
         replacementText: String?,
         replacementImage: String? = nil,
         replacesImage: Bool = false,
+        replacementFiles: [AttachedFile]? = nil,
+        replacesFiles: Bool = false,
         forceWebSearch: Bool = false
     ) async {
         guard !isGenerating,
@@ -385,12 +472,14 @@ public final class ChatManager {
         let original = threads[threadIndex].messages[messageIndex]
         let promptText = replacementText ?? original.text
         let image = replacesImage ? replacementImage : original.attachedImageBase64
+        let files = replacesFiles ? replacementFiles : original.attachedFiles
         threads[threadIndex].messages.removeSubrange(messageIndex...)
         activeThreadId = threadId
         saveThreads()
         await sendMessage(
             text: promptText,
             attachedImageBase64: image,
+            attachedFiles: files,
             forceWebSearch: forceWebSearch
         )
     }
@@ -418,6 +507,8 @@ public final class ChatManager {
 
         let workingDirectory = terminalCurrentDirectory
         isTerminalCommandRunning = true
+        activeTerminalCommand = command
+        activeTerminalStatusText = Self.terminalCommandStatusText(for: command)
         let liveLogId = startLiveTerminalLog(command: command, directory: workingDirectory, action: "interactive_command")
 
         Task { [weak self] in
@@ -432,6 +523,8 @@ public final class ChatManager {
             self.terminalCurrentDirectory = result.directory
             self.finalizeLiveTerminalLog(id: liveLogId, finalOutput: result.output, exitCode: result.exitCode, finalDirectory: result.directory)
             self.isTerminalCommandRunning = false
+            self.activeTerminalCommand = nil
+            self.activeTerminalStatusText = "Accessing File System & Running Command…"
 
             if result.exitCode != 0 {
                 await self.repairFailedTerminalCommand(
@@ -544,7 +637,8 @@ public final class ChatManager {
         env["PYTHONUNBUFFERED"] = "1"
         env["HOMEBREW_NO_AUTO_UPDATE"] = "1"
         env["NONINTERACTIVE"] = "1"
-        env["TERM"] = "xterm-256color"
+        env["CI"] = "1"
+        env["TERM"] = "dumb"
         process.environment = env
 
         let outputLock = NSLock()
@@ -563,17 +657,48 @@ public final class ChatManager {
 
         do {
             try process.run()
-            // 10 minute timeout for large downloads and installations
-            let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 600, execute: timeout)
+            let startTime = Date()
+            
+            // Loop until process exits, times out, or a background server ready state is detected
+            while process.isRunning {
+                Thread.sleep(forTimeInterval: 0.25)
+                
+                outputLock.lock()
+                let currentText = String(data: accumulatedData, encoding: .utf8) ?? ""
+                outputLock.unlock()
+                
+                let lower = currentText.lowercased()
+                let containsServerURL = lower.contains("http://localhost:") ||
+                                        lower.contains("http://127.0.0.1:") ||
+                                        lower.contains("http://0.0.0.0:") ||
+                                        lower.contains("local:   http") ||
+                                        lower.contains("local: http")
+                let hasReadyIndicator = lower.contains("ready in ") ||
+                                        lower.contains("listening on") ||
+                                        lower.contains("compiled successfully") ||
+                                        lower.contains("server running at") ||
+                                        lower.contains("started server on") ||
+                                        lower.contains("press h + enter to show help") ||
+                                        lower.contains("use --host to expose")
+                
+                // If a local server URL is printed and the server has initialized, allow it to remain running in the background and return immediately so the AI can provide the localhost link
+                if containsServerURL && (hasReadyIndicator || Date().timeIntervalSince(startTime) >= 3.0) {
+                    Thread.sleep(forTimeInterval: 0.4) // Let any trailing banner lines arrive
+                    break
+                }
+                
+                if Date().timeIntervalSince(startTime) > 600 {
+                    process.terminate()
+                    break
+                }
+            }
 
-            process.waitUntilExit()
-            timeout.cancel()
             pipe.fileHandleForReading.readabilityHandler = nil
-
-            let remaining = pipe.fileHandleForReading.readDataToEndOfFile()
             outputLock.lock()
-            accumulatedData.append(remaining)
+            let remaining = pipe.fileHandleForReading.availableData
+            if !remaining.isEmpty {
+                accumulatedData.append(remaining)
+            }
             let totalData = accumulatedData
             outputLock.unlock()
 
@@ -591,7 +716,8 @@ public final class ChatManager {
                 output = rawOutput.trimmingCharacters(in: .newlines)
             }
 
-            return (output.isEmpty ? "(No output)" : output, process.terminationStatus, finalDirectory)
+            let status = process.isRunning ? 0 : process.terminationStatus
+            return (output.isEmpty ? "(No output)" : output, status, finalDirectory)
         } catch {
             pipe.fileHandleForReading.readabilityHandler = nil
             return ("Error starting zsh: \(error.localizedDescription)", 1, directory)
@@ -647,6 +773,24 @@ public final class ChatManager {
     }
     public var lmStudioAvailableModels: [String] = []
     public var lmStudioModelContextLengths: [String: Int] = [:]
+    public var autoSwitchLMStudioModel: Bool {
+        didSet {
+            preferences.set(autoSwitchLMStudioModel, forKey: "AutoSwitchLMStudioModel")
+        }
+    }
+    
+    // Apple MLX configurations
+    public var mlxBaseURL: String {
+        didSet {
+            preferences.set(mlxBaseURL, forKey: "MLXBaseURL")
+        }
+    }
+    public var mlxModelId: String? {
+        didSet {
+            preferences.set(mlxModelId, forKey: "MLXModelID")
+        }
+    }
+    public let mlxScanner = MLXModelScanner()
     
     // Model selection persistence and custom presets
     public var geminiModels: [String] = [] {
@@ -772,6 +916,10 @@ public final class ChatManager {
         // Load LM Studio base URL
         self.lmStudioBaseURL = preferences.string(forKey: "LMStudioBaseURL") ?? "http://localhost:1234/v1"
         
+        // Load Apple MLX configurations
+        self.mlxBaseURL = preferences.string(forKey: "MLXBaseURL") ?? "http://localhost:8080/v1"
+        self.mlxModelId = preferences.string(forKey: "MLXModelID")
+        
         // Load model lists and presets
         if let savedGemini = preferences.stringArray(forKey: "GeminiModelsList") {
             self.geminiModels = savedGemini
@@ -807,6 +955,11 @@ public final class ChatManager {
         }
         
         self.lmStudioModelId = preferences.string(forKey: "LMStudioModelID")
+        if preferences.object(forKey: "AutoSwitchLMStudioModel") == nil {
+            self.autoSwitchLMStudioModel = true
+        } else {
+            self.autoSwitchLMStudioModel = preferences.bool(forKey: "AutoSwitchLMStudioModel")
+        }
         
         if let data = preferences.data(forKey: "CustomSystemInstructionPresets"),
            let decoded = try? JSONDecoder().decode([ChatPersona].self, from: data) {
@@ -1073,6 +1226,8 @@ public final class ChatManager {
         providerHealth[Provider.openAI.rawValue] = openAIAPIKey.isEmpty ? .unconfigured : .ready
         providerHealth[Provider.lmStudio.rawValue] = .checking
         providerHealth[Provider.lmStudio.rawValue] = await providerHealthService.lmStudioHealth(baseURL: lmStudioBaseURL)
+        providerHealth[Provider.mlx.rawValue] = .checking
+        providerHealth[Provider.mlx.rawValue] = await providerHealthService.mlxHealth(baseURL: mlxBaseURL)
     }
     
     // Create new chat
@@ -1085,6 +1240,7 @@ public final class ChatManager {
             systemInstructions: persona.instructions,
             temperature: persona.temperature,
             lmStudioModelId: lmStudioModelId ?? lmStudioAvailableModels.first,
+            mlxModelId: mlxModelId ?? mlxScanner.models.first?.id,
             geminiModelId: geminiModelId,
             openRouterModelId: openRouterModelId,
             openAIModelId: openAIModelId,
@@ -1206,6 +1362,10 @@ public final class ChatManager {
                 baseURL = lmStudioBaseURL
                 model = thread.lmStudioModelId ?? lmStudioModelId ?? "default"
                 apiKey = ""
+            case .mlx:
+                baseURL = mlxBaseURL
+                model = thread.mlxModelId ?? mlxModelId ?? mlxScanner.models.first?.id ?? "default"
+                apiKey = ""
             case .gemini:
                 return nil
             }
@@ -1243,6 +1403,17 @@ public final class ChatManager {
         }
         if let modelId = modelId {
             self.lmStudioModelId = modelId
+        }
+    }
+    
+    // Update Apple MLX model selection
+    public func updateMLXModel(id: UUID, modelId: String?) {
+        if let index = threads.firstIndex(where: { $0.id == id }) {
+            threads[index].mlxModelId = modelId
+            saveThreads()
+        }
+        if let modelId = modelId {
+            self.mlxModelId = modelId
         }
     }
     
@@ -1404,8 +1575,8 @@ public final class ChatManager {
     // Update Show System Messages setting
     public func updateShowSystemMessages(id: UUID, show: Bool) {
         preferences.set(show, forKey: "globalDeveloperMode")
-        for i in 0..<threads.count {
-            threads[i].showSystemMessages = show
+        if let index = threads.firstIndex(where: { $0.id == id }) {
+            threads[index].showSystemMessages = show
         }
         saveThreads()
     }
@@ -1474,11 +1645,74 @@ public final class ChatManager {
         applyLMStudioSnapshot(snapshot)
     }
 
+    public var injectingLMStudioModelId: String? = nil
+    public var injectedLMStudioModels: Set<String> = []
+    public var injectStatusMessage: String? = nil
+
+    /// Injects/loads the selected model directly into LM Studio memory space (Metal RAM)
+    @MainActor
+    public func injectLMStudioModel(modelId: String) async {
+        guard !modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        injectingLMStudioModelId = modelId
+        injectStatusMessage = "Injecting model into memory..."
+        
+        let trimmedBase = lmStudioBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(trimmedBase)/chat/completions") else {
+            injectingLMStudioModelId = nil
+            injectStatusMessage = "Invalid LM Studio URL"
+            return
+        }
+        
+        var request = URLRequest(url: url, timeoutInterval: 120)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload: [String: Any] = [
+            "model": modelId,
+            "messages": [
+                ["role": "user", "content": "hello"]
+            ],
+            "max_tokens": 1,
+            "temperature": 0.0,
+            "stream": false
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            let (data, response) = try await networkSession.data(for: request)
+            if let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
+                injectedLMStudioModels.insert(modelId)
+                injectingLMStudioModelId = nil
+                injectStatusMessage = "Ready in memory!"
+                
+                // Refresh snapshot
+                await fetchLMStudioModels()
+            } else {
+                let errText = String(data: data, encoding: .utf8) ?? "HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"
+                injectingLMStudioModelId = nil
+                injectStatusMessage = "Failed to inject: \(errText)"
+            }
+        } catch {
+            injectingLMStudioModelId = nil
+            injectStatusMessage = "Error: \(error.localizedDescription)"
+        }
+    }
+
     @MainActor
     private func applyLMStudioSnapshot(_ snapshot: LMStudioModelSnapshot) {
         lmStudioAvailableModels = snapshot.models
         lmStudioModelContextLengths = snapshot.contextLengths
-        for index in threads.indices where threads[index].provider == .lmStudio && threads[index].lmStudioModelId == nil {
+        
+        if autoSwitchLMStudioModel, let runningModel = snapshot.models.first {
+            self.lmStudioModelId = runningModel
+            if let activeId = activeThreadId,
+               let index = threads.firstIndex(where: { $0.id == activeId }),
+               threads[index].provider == .lmStudio {
+                threads[index].lmStudioModelId = runningModel
+            }
+        }
+        
+        for index in threads.indices where threads[index].provider == .lmStudio && (threads[index].lmStudioModelId == nil || (autoSwitchLMStudioModel && threads[index].id == activeThreadId)) {
             threads[index].lmStudioModelId = snapshot.models.first
         }
         saveThreads()
@@ -1537,6 +1771,8 @@ public final class ChatManager {
             if label.contains("16k") { return 16_384 }
             if label.contains("4k") { return 4_096 }
             return 8_192
+        case .mlx:
+            return 32_768
         case .gemini:
             return (thread.geminiModelId ?? "").lowercased().contains("pro") ? 2_000_000 : 1_000_000
         case .openAI, .openRouter:
@@ -1556,15 +1792,25 @@ public final class ChatManager {
         return min(96_000, availableHistoryTokens * 3)
     }
 
-    // Calculate the same prompt payload that generation uses, rather than the
-    // full transcript retained on disk for the user's history.
+    // Cache for compiled system prompt char count to avoid expensive recomputation on every streaming token
+    private var cachedPrePromptCounts: [UUID: (timestamp: Date, count: Int)] = [:]
+
+    // Calculate estimated tokens in prompt payload with cached preprompt count
     public func getEstimatedUsedTokens(for thread: ChatThread) -> Int {
         _ = contextRevision
-        let compiledSystem = getCompiledPrePrompt(for: thread.id)
-        var totalChars = compiledSystem.count
+        let now = Date()
+        let sysCount: Int
+        if let cached = cachedPrePromptCounts[thread.id], now.timeIntervalSince(cached.timestamp) < 4.0 {
+            sysCount = cached.count
+        } else {
+            let compiledSystem = getCompiledPrePrompt(for: thread.id)
+            sysCount = compiledSystem.count
+            cachedPrePromptCounts[thread.id] = (timestamp: now, count: sysCount)
+        }
+        
+        var totalChars = sysCount
         let visibleMessages = thread.messages.last?.text == "..." ? Array(thread.messages.dropLast()) : thread.messages
-        let payloadHistory = Self.optimizedHistory(visibleMessages, maximumCharacters: historyCharacterBudget(for: thread))
-        for msg in payloadHistory {
+        for msg in visibleMessages {
             totalChars += msg.text.count
         }
         return min(contextTokenCapacity(for: thread), max(0, totalChars / 3))
@@ -1575,6 +1821,8 @@ public final class ChatManager {
         switch thread.provider {
         case .lmStudio:
             return getLMStudioContextLength(for: thread.lmStudioModelId)
+        case .mlx:
+            return "32k–128k ctx"
         case .gemini:
             let model = (thread.geminiModelId ?? "").lowercased()
             if model.contains("pro") {
@@ -1588,9 +1836,12 @@ public final class ChatManager {
         }
     }
     
-    // Get formatted Context Usage string: "<used>/<total> ctx"
-    public func getContextUsageString(for thread: ChatThread) -> String {
+    // Unified metrics calculation for developer mode context indicator
+    public func getContextUsageMetrics(for thread: ChatThread) -> (string: String, fraction: Double) {
+        let capacity = max(1, contextTokenCapacity(for: thread))
         let usedTokens = getEstimatedUsedTokens(for: thread)
+        let fraction = min(1.0, max(0.0, Double(usedTokens) / Double(capacity)))
+        
         let usedFormatted: String
         if usedTokens >= 10_000 {
             usedFormatted = String(format: "%.1fk", Double(usedTokens) / 1000.0)
@@ -1602,14 +1853,16 @@ public final class ChatManager {
         
         let totalStr = getThreadContextLength(for: thread)
         let totalClean = totalStr.replacingOccurrences(of: " ctx", with: "")
-        
-        return "\(usedFormatted)/\(totalClean) ctx"
+        return ("\(usedFormatted)/\(totalClean) ctx", fraction)
+    }
+
+    // Get formatted Context Usage string: "<used>/<total> ctx"
+    public func getContextUsageString(for thread: ChatThread) -> String {
+        return getContextUsageMetrics(for: thread).string
     }
 
     public func getContextUsageFraction(for thread: ChatThread) -> Double {
-        let capacity = max(1, contextTokenCapacity(for: thread))
-        let usedTokens = getEstimatedUsedTokens(for: thread)
-        return min(1, max(0, Double(usedTokens) / Double(capacity)))
+        return getContextUsageMetrics(for: thread).fraction
     }
     
     // Clear/reset thread messages to empty context window
@@ -1806,6 +2059,7 @@ public final class ChatManager {
     public func sendMessage(
         text: String,
         attachedImageBase64: String? = nil,
+        attachedFiles: [AttachedFile]? = nil,
         forceWebSearch: Bool = false
     ) async {
         if activeThread == nil {
@@ -1815,10 +2069,19 @@ public final class ChatManager {
                 createNewChatWithDefaults()
             }
         }
-        guard let thread = activeThread, (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachedImageBase64 != nil) else { return }
+        let hasContent = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                         attachedImageBase64 != nil ||
+                         (attachedFiles != nil && !attachedFiles!.isEmpty)
+        guard let thread = activeThread, hasContent else { return }
         let threadId = thread.id
         
-        let effectiveText = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? (attachedImageBase64 != nil ? "Describe this image in detail and answer any questions." : "") : text
+        let effectiveText: String = {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+            if attachedImageBase64 != nil { return "Describe this image in detail and answer any questions." }
+            if let files = attachedFiles, !files.isEmpty { return "Please analyze the attached file(s) and provide a summary of the key information." }
+            return ""
+        }()
         activeGenerationTasks[threadId]?.cancel()
         activeGenerationIDs[threadId] = nil
         toolRequestManager.clearActiveRequest()
@@ -1839,7 +2102,13 @@ public final class ChatManager {
         
         // 1. Add user message
         let attachmentID = attachedImageBase64.flatMap { attachmentStore.store(dataURL: $0) }
-        let userMessage = ChatMessage(role: .user, text: effectiveText, attachedImageBase64: attachedImageBase64, attachmentID: attachmentID)
+        let userMessage = ChatMessage(
+            role: .user,
+            text: effectiveText,
+            attachedImageBase64: attachedImageBase64,
+            attachmentID: attachmentID,
+            attachedFiles: attachedFiles
+        )
         var updatedThread = thread
         // Tool availability is now controlled by the individual Toolbox
         // switches. Retire the hidden per-thread master flag so an older chat
@@ -1849,8 +2118,14 @@ public final class ChatManager {
         
         // Update title if it's the first user message
         if updatedThread.messages.filter({ $0.role == .user }).count == 1 {
-            let words = effectiveText.split(separator: " ").prefix(4)
-            updatedThread.title = words.joined(separator: " ") + (effectiveText.split(separator: " ").count > 4 ? "..." : "")
+            let titleSource: String = {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+                if let firstFile = attachedFiles?.first { return firstFile.name }
+                return effectiveText
+            }()
+            let words = titleSource.split(separator: " ").prefix(4)
+            updatedThread.title = words.joined(separator: " ") + (titleSource.split(separator: " ").count > 4 ? "..." : "")
         }
         
         // 2. Let the selected model decide whether an app launch or other
@@ -1992,6 +2267,7 @@ public final class ChatManager {
             systemInstructions: updatedThread.systemInstructions,
             temperature: updatedThread.temperature,
             lmStudioModelId: updatedThread.lmStudioModelId,
+            mlxModelId: updatedThread.mlxModelId,
             geminiModelId: updatedThread.geminiModelId,
             openRouterModelId: updatedThread.openRouterModelId,
             isToolUseEnabled: updatedThread.isToolUseEnabled
@@ -2052,6 +2328,7 @@ public final class ChatManager {
             systemInstructions: updatedThread.systemInstructions,
             temperature: updatedThread.temperature,
             lmStudioModelId: updatedThread.lmStudioModelId,
+            mlxModelId: updatedThread.mlxModelId,
             geminiModelId: updatedThread.geminiModelId,
             openRouterModelId: updatedThread.openRouterModelId,
             isToolUseEnabled: forceDirectAnswer ? false : updatedThread.isToolUseEnabled,
@@ -2108,6 +2385,7 @@ public final class ChatManager {
         case "advanced_memory": name = "advanced_memory"
         case "learning": name = "learning"
         case "file_system": name = "terminal_access"
+        case "apple_notes": name = "apple_notes"
         case "mcp": name = request.mcpTool ?? request.title
         default: name = "dynamic_insights"
         }
@@ -2132,6 +2410,8 @@ public final class ChatManager {
         if let learningId = request.learningId { values["learningId"] = .string(learningId) }
         if let learningKind = request.learningKind { values["learningKind"] = .string(learningKind) }
         if let learningTopic = request.learningTopic { values["learningTopic"] = .string(learningTopic) }
+        if let folder = request.folder { values["folder"] = .string(folder) }
+        if let noteId = request.noteId { values["noteId"] = .string(noteId) }
         if let mcpServer = request.mcpServer { values["server"] = .string(mcpServer) }
         if let mcpTool = request.mcpTool { values["tool"] = .string(mcpTool) }
         if let mcpArgs = request.mcpArguments {
@@ -2225,6 +2505,30 @@ public final class ChatManager {
         return "\(retained)\n\n[Output truncated: \(lines.count) lines / \(output.count) characters; first \(headLines) and last \(tailLines) lines retained.]"
     }
 
+    /// Computes the effective text to send to the model, including structured attached file contents.
+    public static func effectiveMessageText(for message: ChatMessage) -> String {
+        var base = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let files = message.attachedFiles, !files.isEmpty {
+            var fileDocs = ""
+            for file in files {
+                if let content = file.textContent, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let typeLabel = file.fileExtension.uppercased()
+                    let pageLabel = file.pageCount.map { "\($0) pages, " } ?? ""
+                    let sizeLabel = ByteCountFormatter.string(fromByteCount: file.fileSize, countStyle: .file)
+                    fileDocs += "\n\n[ATTACHED FILE: \(file.name) (\(typeLabel), \(pageLabel)\(sizeLabel))]\n```\(file.fileExtension.lowercased())\n\(content)\n```"
+                }
+            }
+            if !fileDocs.isEmpty {
+                if base.isEmpty {
+                    base = "Please analyze the attached file(s) and provide a comprehensive response." + fileDocs
+                } else {
+                    base = base + fileDocs
+                }
+            }
+        }
+        return base
+    }
+
     /// Keep the high-value recent conversation while bounding prompt-prefill
     /// cost and memory. Full transcripts remain stored on disk and visible in
     /// the UI; only the model-facing copy is compacted.
@@ -2242,7 +2546,8 @@ public final class ChatManager {
                 text: "\(prefix)\n\n[Tool output compacted: \(message.text.count) characters]\n\n\(suffix)",
                 timestamp: message.timestamp,
                 attachedImageBase64: message.attachedImageBase64,
-                attachmentID: message.attachmentID
+                attachmentID: message.attachmentID,
+                attachedFiles: message.attachedFiles
             )
         }
 
@@ -2260,7 +2565,8 @@ public final class ChatManager {
                     text: shortened,
                     timestamp: message.timestamp,
                     attachedImageBase64: message.attachedImageBase64,
-                    attachmentID: message.attachmentID
+                    attachmentID: message.attachmentID,
+                    attachedFiles: message.attachedFiles
                 ))
                 break
             }
@@ -2564,6 +2870,7 @@ public final class ChatManager {
         systemInstructions: String,
         temperature: Double,
         lmStudioModelId: String?,
+        mlxModelId: String? = nil,
         geminiModelId: String?,
         openRouterModelId: String?,
         isToolUseEnabled: Bool,
@@ -2595,7 +2902,7 @@ public final class ChatManager {
         // Local models share one finite context window between history,
         // reasoning, and output. Cloud providers have much larger windows.
         let adaptiveMaxTokens: Int = {
-            guard provider == .lmStudio,
+            guard provider == .lmStudio || provider == .mlx,
                   let thread = self.threads.first(where: { $0.id == threadId }) else {
                 return requestedMaxTokens
             }
@@ -2626,7 +2933,9 @@ public final class ChatManager {
                 
                 for msg in threadMessages {
                     let roleStr = msg.role == .user ? "user" : "model"
-                    let msgText = msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let msgText = msg.role == .user
+                        ? Self.effectiveMessageText(for: msg)
+                        : msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
                     let textToSend = msgText.isEmpty ? (msg.attachedImageBase64 != nil ? "Describe this image in detail and answer any questions." : "Hello") : msgText
                     var parts: [[String: Any]] = [["text": textToSend]]
                     
@@ -2753,6 +3062,40 @@ public final class ChatManager {
                             bodyText += line + "\n"
                         }
                         
+                        // Retry once with backoff for transient errors (429, 503, 504)
+                        let retryableCodes: Set<Int> = [429, 503, 504]
+                        if retryableCodes.contains(httpResponse.statusCode) {
+                            let backoff: UInt64 = httpResponse.statusCode == 429 ? 2_000_000_000 : 1_000_000_000
+                            try await Task.sleep(nanoseconds: backoff)
+                            if !Task.isCancelled {
+                                let (retryBytes, retryResp) = try await networkSession.bytes(for: request)
+                                if let retryHTTP = retryResp as? HTTPURLResponse, retryHTTP.statusCode == 200 {
+                                    // Retry succeeded — stream from the retry response
+                                    var responseText = ""
+                                    var isFirstChunk = true
+                                    
+                                    let hitOutputLimit = try await self.parseAndStreamGeminiSSE(bytes: retryBytes) { chunkText in
+                                        if isFirstChunk {
+                                            responseText = ""
+                                            isFirstChunk = false
+                                        }
+                                        responseText += chunkText
+                                        self.updateAssistantMessage(threadId: threadId, messageId: assistantMessageId, text: responseText, saveToDisk: false)
+                                    }
+                                    
+                                    if !Task.isCancelled {
+                                        self.saveThreads()
+                                        if isToolUseEnabled && self.isPrePromptEnabled("tool_schemas") {
+                                            self.checkForToolRequest(threadId: threadId, messageId: assistantMessageId)
+                                        } else {
+                                            self.controller(for: threadId).complete()
+                                        }
+                                    }
+                                    return
+                                }
+                            }
+                        }
+                        
                         var errorDetail = ""
                         if let data = bodyText.data(using: .utf8),
                            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -2763,10 +3106,12 @@ public final class ChatManager {
                             errorDetail = " Details: \(bodyText)"
                         }
                         
+                        let isRetryable = httpResponse.statusCode == 429 || httpResponse.statusCode == 503
+                        let friendlyPrefix = isRetryable ? "The Gemini API is temporarily overloaded (HTTP \(httpResponse.statusCode)). Please try again in a moment." : "Gemini API returned status code \(httpResponse.statusCode)."
                         throw NSError(
                             domain: "GeminiError",
                             code: httpResponse.statusCode,
-                            userInfo: [NSLocalizedDescriptionKey: "Gemini API returned status code \(httpResponse.statusCode).\(errorDetail)"]
+                            userInfo: [NSLocalizedDescriptionKey: "\(friendlyPrefix)\(errorDetail)"]
                         )
                     }
                     
@@ -2815,6 +3160,55 @@ public final class ChatManager {
                         )
                     }
                 }
+            } else if provider == .mlx {
+                // --- APPLE MLX DIRECT IN-PROCESS METAL GENERATION ---
+                let localModel = self.mlxScanner.models.first(where: { $0.id == mlxModelId || $0.path == mlxModelId || $0.name == mlxModelId }) ?? self.mlxScanner.models.first
+                
+                var threadMessages: [ChatMessage] = []
+                if let idx = self.threads.firstIndex(where: { $0.id == threadId }) {
+                    let sourceThread = self.threads[idx]
+                    threadMessages = self.generationHistory(
+                        for: sourceThread,
+                        reservedOutputTokens: adaptiveMaxTokens,
+                        forceDirectAnswer: forceDirectAnswer
+                    )
+                }
+                
+                if let model = localModel, model.isMLXNative {
+                    do {
+                        self.updateAssistantMessage(threadId: threadId, messageId: assistantMessageId, text: "")
+                        var accumulated = ""
+                        
+                        let _ = try await InProcessMLXEngine.shared.generateStream(
+                            prompt: promptText,
+                            messages: threadMessages,
+                            modelPath: model.path,
+                            modelDisplayName: model.displayName,
+                            maxTokens: adaptiveMaxTokens,
+                            temperature: Float(temperature)
+                        ) { chunk in
+                            accumulated += chunk
+                            self.updateAssistantMessage(threadId: threadId, messageId: assistantMessageId, text: accumulated)
+                        }
+                        
+                        self.saveThreads()
+                        if forceDirectAnswer {
+                            self.finalizeDirectAnswerRecovery(threadId: threadId, messageId: assistantMessageId)
+                        } else if isToolUseEnabled && self.isPrePromptEnabled("tool_schemas") {
+                            self.checkForToolRequest(threadId: threadId, messageId: assistantMessageId)
+                        } else {
+                            self.controller(for: threadId).complete()
+                        }
+                        self.toolRequestManager.finishProcessing(threadId: threadId)
+                        return
+                    } catch {
+                        print("Direct MLX in-process inference failed, trying fallback server: \(error)")
+                    }
+                }
+                
+                // Fallback to local server if direct inference could not load model or model is non-native
+                let baseURL = self.mlxBaseURL
+                let modelId = mlxModelId ?? self.mlxModelId ?? self.mlxScanner.models.first?.id ?? "default"
             } else if provider == .lmStudio {
                 // --- LM STUDIO LOCAL SERVER GENERATION ---
                 let baseURL = self.lmStudioBaseURL
@@ -2853,7 +3247,7 @@ public final class ChatManager {
                         // Do not send previous private reasoning back to the model.
                         let msgText = msg.role == .assistant
                             ? Self.assistantDisplayText(from: msg.text).trimmingCharacters(in: .whitespacesAndNewlines)
-                            : msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            : Self.effectiveMessageText(for: msg)
                         
                         // Keep assistant tool requests in history so local models retain turn context and know which tool call produced the incoming response.
                         
@@ -3021,19 +3415,24 @@ public final class ChatManager {
                     }
                     self.toolRequestManager.finishProcessing(threadId: threadId)
                 } catch {
-                    print("Error streaming from LM Studio: \(error)")
+                    let isMLX = provider == .mlx
+                    let providerLabel = isMLX ? "Apple MLX" : "LM Studio"
+                    print("Error streaming from \(providerLabel): \(error)")
                     self.controller(for: threadId).fail()
                     self.toolRequestManager.finishProcessing(threadId: threadId)
                     if !Task.isCancelled {
                         var errorMsg = error.localizedDescription
                         if errorMsg.contains("timed out") || errorMsg.contains("time out") {
-                            errorMsg = "The request to LM Studio timed out. This usually happens if the loaded model doesn't support vision/images, or if local inference is taking a long time.\n\nTips:\n- Make sure a vision-capable model is loaded in LM Studio.\n- Or switch to Gemini, OpenRouter, or OpenAI."
+                            errorMsg = "The request to \(providerLabel) timed out. This usually happens if the model doesn't support vision/images, or if local inference is taking a long time.\n\nTips:\n- Ensure the model is loaded properly.\n- Or switch to Gemini, OpenRouter, or OpenAI."
                         }
-                        DispatchQueue.main.async { self.errorMessage = "LM Studio error: \(errorMsg)" }
+                        DispatchQueue.main.async { self.errorMessage = "\(providerLabel) error: \(errorMsg)" }
+                        let helpText = isMLX
+                            ? "Please check that your Apple MLX server (mlx_lm.server) is running at \(baseURL)."
+                            : "Please check that your LM Studio Local Server is running at \(baseURL) and has an active model loaded."
                         self.updateAssistantMessage(
                             threadId: threadId,
                             messageId: assistantMessageId,
-                            text: "Failed to query LM Studio.\n\n\(errorMsg)\n\nPlease check that your LM Studio Local Server is running at \(baseURL) and has an active model loaded."
+                            text: "Failed to query \(providerLabel).\n\n\(errorMsg)\n\n\(helpText)"
                         )
                     }
                 }
@@ -3073,7 +3472,7 @@ public final class ChatManager {
                         let roleStr = msg.role == .user ? "user" : "assistant"
                         let msgText = msg.role == .assistant
                             ? Self.assistantDisplayText(from: msg.text).trimmingCharacters(in: .whitespacesAndNewlines)
-                            : msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            : Self.effectiveMessageText(for: msg)
                         var textToSend = msgText.isEmpty ? (msg.attachedImageBase64 != nil ? "Describe this image in detail and answer any questions." : "") : msgText
                         if textToSend.isEmpty || textToSend == "..." { continue }
                         
@@ -3433,7 +3832,9 @@ public final class ChatManager {
                     let lastUserIndex = threadMessages.lastIndex(where: { $0.role == .user }) ?? -1
                     for (index, msg) in threadMessages.enumerated() {
                         let roleStr = msg.role == .user ? "user" : "assistant"
-                        let msgText = msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let msgText = msg.role == .user
+                            ? Self.effectiveMessageText(for: msg)
+                            : msg.text.trimmingCharacters(in: .whitespacesAndNewlines)
                         var textToSend = msgText.isEmpty ? (msg.attachedImageBase64 != nil ? "Describe this image in detail and answer any questions." : "Hello") : msgText
                         if index == lastUserIndex,
                            msg.role == .user,
@@ -3762,6 +4163,10 @@ public final class ChatManager {
                 Task { await self.performFileSystemAction(toolRequest: toolRequest, threadId: threadId) }
                 return
             }
+            if toolRequest.type == "apple_notes" {
+                self.performAppleNotesAction(toolRequest: toolRequest, threadId: threadId)
+                return
+            }
             if toolRequest.type == "mcp" {
                 Task { await self.performMCPAction(toolRequest: toolRequest, threadId: threadId) }
                 return
@@ -3855,9 +4260,11 @@ public final class ChatManager {
         // Ask once for either the next explicitly requested action or the
         // conclusion. A successful action does not necessarily mean a
         // multi-step request is finished (for example, type then press Enter).
-        let visibleAnswer = ChatMessage.extractReasoning(from: messageText).mainText
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if visibleAnswer.isEmpty,
+        let parsedReasoning = ChatMessage.extractReasoning(from: messageText)
+        let visibleAnswer = parsedReasoning.mainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveReasoning = parsedReasoning.reasoningText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let hasSubstantiveAnswer = !visibleAnswer.isEmpty || effectiveReasoning.count >= 20
+        if !hasSubstantiveAnswer,
            let activeRun = runController.activeRun,
            activeRun.completedToolCalls.isEmpty,
            !self.toolNudgedThreadIds.contains(threadId) {
@@ -3873,7 +4280,7 @@ public final class ChatManager {
             }
             return
         }
-        if visibleAnswer.isEmpty,
+        if !hasSubstantiveAnswer,
            let activeRun = runController.activeRun,
            !activeRun.completedToolCalls.isEmpty,
            runController.requestContinuationNudge() {
@@ -4240,7 +4647,41 @@ public final class ChatManager {
         
         let universalExcellenceDirective = "Answer accurately, directly, and completely. Match depth and formatting to the request; state uncertainty and never invent facts or completed actions."
         
+        let targetThread = threadId.flatMap { id in threads.first(where: { $0.id == id }) }
+        let currentModelName = targetThread?.activeModelName ?? "the active model"
+        let currentProviderName = targetThread?.provider.displayName ?? "local / cloud engine"
+        
+        var availableCapabilitiesList: [String] = []
+        if isToolUseEnabled {
+            if preferences.object(forKey: "enableInternetSearch") as? Bool ?? true {
+                availableCapabilitiesList.append("• Web Research (`internet_use`): Live search and multi-source retrieval for up-to-date information, benchmarks, and real-time facts.")
+            }
+            if preferences.object(forKey: "enableFileSystem") as? Bool ?? true {
+                availableCapabilitiesList.append("• Terminal & File System (`file_system`): Full authorized native macOS shell command execution (zsh, brew, scripts) and file operations (read, write, create, inspect).")
+            }
+            availableCapabilitiesList.append("• Structured Long-Term Memory (`advanced_memory`): Graph-based entity and relationship knowledge store across turns.")
+            availableCapabilitiesList.append("• Self-Learning & Rules (`learning`): Recording and applying verified operational corrections, patterns, and workflows.")
+            if preferences.object(forKey: "enableDynamicInsights") as? Bool ?? true {
+                availableCapabilitiesList.append("• Dynamic Insights (`dynamic_insights`): Structured analysis cards and visual summaries.")
+            }
+            for mcpTool in MCPServerManager.shared.allTools {
+                availableCapabilitiesList.append("• MCP Integration (`\(mcpTool.serverName)`): \(mcpTool.name) - \(mcpTool.description)")
+            }
+        }
+        let capabilitiesStr = availableCapabilitiesList.isEmpty ? "Direct conversation and reasoning." : availableCapabilitiesList.joined(separator: "\n")
+
+        let haliteIdentityPrompt = """
+        [AGENT IDENTITY & ARCHITECTURE]
+        You are Halite, a native, state-of-the-art macOS AI Agent.
+        - Core Engine: Running on top of \(currentModelName) via \(currentProviderName).
+        - Tuning & Alignment: Optimized for proactive problem solving, tool execution, direct truthfulness, and precise developer/creative assistance.
+        - Capabilities & Tool Access:
+        \(capabilitiesStr)
+        - Self-Awareness: You know you are Halite. If asked who you are, what you can do, your architecture, or how you compare to other models/agents, accurately state your identity as Halite powered by \(currentModelName), detail your exact live capabilities and tools, and answer with confidence without unnecessary generic disclaimers.
+        """
+
         var components: [String] = []
+        components.append(haliteIdentityPrompt)
         if !effectiveSystemInstructions.isEmpty {
             components.append("[USER SYSTEM INSTRUCTIONS]\n\(effectiveSystemInstructions)")
         }
@@ -4314,7 +4755,7 @@ public final class ChatManager {
 
         // Keep this final so long tool schemas, skills, or memory cannot push
         // the completion contract into the easy-to-ignore middle of context.
-        components.append("[FINAL CHECK] Cover every requested item and exact constraint. Report unsupported items and only claim actions confirmed by successful tool results.")
+        components.append("[FINAL CHECK] Cover every requested item and exact constraint. Perform all calculations and unit conversions internally; never expose scratchpad notes, rough drafts, backtracking, or self-correction monologues. Present a clean, consistent, verified answer with exact matching totals.")
         if !exactConstraints.isEmpty {
             components.append("[FINAL CONSTRAINT CHECK]\nPreserve these exact user values in the answer: \(exactConstraints.joined(separator: ", ")).")
         }
@@ -4350,6 +4791,7 @@ public final class ChatManager {
         - When the user asks you to install software, run commands, create files, or troubleshoot, DO NOT refuse or say you cannot execute commands.
         - DO NOT print manual tutorial steps when asked to do something. Perform the action directly by emitting exactly one tool JSON object: {"type": "file_system", "action": "execute_command", "command": "..."}.
         - For installing macOS packages or tools, use Homebrew (e.g. `brew install <package>` or `brew install --cask <app>`).
+        - When running development servers (e.g. `npm run dev`, `vite`, `nuxt`, `next dev`), report the active `http://localhost:...` URL to the user in your final response and complete your turn immediately.
         - Inspect the tool result before taking the next step. Stop immediately when the request is complete.
         """
     }
@@ -4498,10 +4940,8 @@ public final class ChatManager {
         let agenticWorkspaceWork = localFileAction && (
             directCreationOrMutation || has(["debug", "test", "verify", "refactor", "configure", "set up"])
         )
-        let analyticalWorkflow = has(["research", "compare", "analyze", "debug", "audit", "architecture"]) &&
-            (needsLiveSearch || suppliedOrLocalContext || q.count > 180)
         let shouldTrackProgress = !conversational && !isCapability && !localClock && (
-            explicitlyMultiStep || agenticWorkspaceWork || analyticalWorkflow || q.count > 500
+            explicitlyMultiStep || (agenticWorkspaceWork && complex)
         )
         return RequestIntent(
             needsFileSystem: filesystem,
@@ -4890,7 +5330,8 @@ public final class ChatManager {
         InstalledLibraryApiDef(id: "spotify_api", name: "Spotify Audio & Music Analytics API", description: "Searches track tempos, artist discographies, album releases, and playlist recommendations.", category: "Media", icon: "music.note", promptDirective: "\n[ACTIVE API TOOL: Spotify Web API]: Spotify Audio Analytics API active (Endpoint: https://api.spotify.com/v1/me/top/tracks). Search track tempos, artist discographies, top tracks, and recommendations."),
         InstalledLibraryApiDef(id: "jsonplaceholder_api", name: "JSONPlaceholder Prototyping REST API", description: "Mock REST API for testing code generation, JSON data fetching, and API prototyping.", category: "Developer", icon: "arrow.triangle.2.circlepath", promptDirective: "\n[ACTIVE API TOOL: JSONPlaceholder REST API]: Prototyping REST API active (Endpoint: https://jsonplaceholder.typicode.com/posts). Use for code generation examples and mock payloads."),
         InstalledLibraryApiDef(id: "pubmed_api", name: "PubMed Biomedical Research Index API", description: "Indexes scientific medical studies, clinical trial papers, and DOI citations.", category: "Research", icon: "cross.case.fill", promptDirective: "\n[ACTIVE API TOOL: PubMed Research API]: PubMed NCBI Search API active (Endpoint: https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi). Reference peer-reviewed medical publications."),
-        InstalledLibraryApiDef(id: "market_api", name: "AlphaVantage Financial Stock API", description: "Fetches live stock quotes, market trends, ticker valuation multiples, and trading indicators.", category: "Finance", icon: "dollarsign.circle.fill", promptDirective: "\n[ACTIVE API TOOL: AlphaVantage Finance]: AlphaVantage Financial API active (Endpoint: https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=<TICKER>). Analyze ticker symbols and financial data.")
+        InstalledLibraryApiDef(id: "market_api", name: "AlphaVantage Financial Stock API", description: "Fetches live stock quotes, market trends, ticker valuation multiples, and trading indicators.", category: "Finance", icon: "dollarsign.circle.fill", promptDirective: "\n[ACTIVE API TOOL: AlphaVantage Finance]: AlphaVantage Financial API active (Endpoint: https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=<TICKER>). Analyze ticker symbols and financial data."),
+        InstalledLibraryApiDef(id: "apple_notes_api", name: "Apple Notes macOS Integration", description: "Direct native connection to Apple Notes. Create, read, search, append, and organize notes and folders.", category: "macOS Integrations", icon: "note.text", promptDirective: "\n[ACTIVE API TOOL: Apple Notes]: Native Apple Notes access active. Use `apple_notes(action,title,content,folder,query,noteId)` with actions `list`, `search`, `read`, `create`, `append`, `folders`, `delete`, `show`.")
     ]
 
 
@@ -5279,6 +5720,8 @@ public final class ChatManager {
                 statusMessage = "Error: Confirmation required. \(reason)"
             case .allow:
                 isTerminalCommandRunning = true
+                activeTerminalCommand = cmdToRun
+                activeTerminalStatusText = Self.terminalCommandStatusText(for: cmdToRun)
                 let liveLogId = startLiveTerminalLog(command: cmdToRun, directory: path, action: "execute_command")
                 let execution = await Task.detached {
                     Self.executeTerminalCommand(cmdToRun, in: path) { chunk in
@@ -5289,6 +5732,8 @@ public final class ChatManager {
                 }.value
                 finalizeLiveTerminalLog(id: liveLogId, finalOutput: execution.output, exitCode: execution.exitCode, finalDirectory: execution.directory)
                 isTerminalCommandRunning = false
+                activeTerminalCommand = nil
+                activeTerminalStatusText = "Accessing File System & Running Command…"
                 terminalCurrentDirectory = execution.directory
                 let output = boundedToolOutput(execution.output)
                 statusMessage = "Terminal Command Executed (Exit code \(execution.exitCode)):\n$ \(cmdToRun)\nDirectory: \(execution.directory)\n\nOutput:\n\(output)"
@@ -5526,6 +5971,36 @@ public final class ChatManager {
     }
 
     @MainActor
+    private func performAppleNotesAction(toolRequest: ToolRequest, threadId: UUID) {
+        let action = toolRequest.action ?? "list"
+        let fallbackTitle = (toolRequest.title == "Apple Notes" || toolRequest.title == "Tool Request" || toolRequest.title.hasPrefix("Notes:")) ? nil : toolRequest.title
+        let noteTitle = toolRequest.path ?? fallbackTitle
+        let content = toolRequest.content
+        let folder = toolRequest.folder
+        let query = toolRequest.query
+        let noteId = toolRequest.noteId
+
+        let controller = self.controller(for: threadId)
+        let callID = UUID().uuidString
+        controller.record(AgentToolResult(callID: callID, toolName: "apple_notes", success: true))
+
+        Task {
+            let resultJSON = await Task.detached {
+                AppleNotesSkill.execute(
+                    action: action,
+                    title: noteTitle,
+                    content: content,
+                    folder: folder,
+                    query: query,
+                    noteId: noteId
+                )
+            }.value
+
+            await self.sendToolResponse(text: resultJSON, threadId: threadId)
+        }
+    }
+
+    @MainActor
     private func performMCPAction(toolRequest: ToolRequest, threadId: UUID) async {
         let rawToolName = toolRequest.mcpTool ?? toolRequest.title.replacingOccurrences(of: "MCP: ", with: "").replacingOccurrences(of: "mcp_", with: "")
         let allTools = MCPServerManager.shared.allTools
@@ -5753,6 +6228,7 @@ public final class ChatManager {
                 "executed_queries": queries,
                 "provider_queries": outcome.queriesUsed,
                 "successful_queries": outcome.successfulQueries,
+                "query_sources": outcome.querySources,
                 "search_round": allTurnQueries.count,
                 "previous_queries": allTurnQueries,
                 "can_search_again": canSearchAgain,
@@ -5760,7 +6236,9 @@ public final class ChatManager {
                 "source_domains": outcome.domains,
                 "coverage": outcome.coverage,
                 "instruction": outcome.success
-                    ? "Answer the original request from the fetched evidence. Prefer primary and authoritative sources, cross-check material claims across independent sources when possible, distinguish established evidence from preliminary or indirect findings, and preserve every user constraint. Cite the supporting fetched page inline with a clean Markdown link. Omit claims the retrieved evidence does not support."
+                    ? (canSearchAgain
+                        ? "Answer the original request from the fetched evidence with inline markdown links. Present a clean, definitive, verified answer without exposing internal scratchpad reasoning, backtracking, self-corrections, or draft recalculations. Perform all calculations and unit conversions internally and present consistent numbers in a polished table/breakdown."
+                        : "Answer the original request from the fetched evidence. Present a clean, definitive, verified answer without exposing internal scratchpad reasoning, backtracking, self-corrections, or draft recalculations. Perform all calculations and unit conversions internally and present consistent numbers in a polished table/breakdown. Prefer primary and authoritative sources, cite supporting pages inline, and preserve every user constraint.")
                     : (canSearchAgain
                         ? "The previous search did not produce relevant fetched evidence. Do not answer from memory. Emit internet_use with one meaningfully different, narrower query aimed at the missing fact; preserve original_request constraints and never repeat previous_queries."
                         : "Do not answer a current-information question from memory. State that relevant live evidence could not be verified after the allowed search rounds and identify the limitation.")
@@ -5833,13 +6311,45 @@ public final class ChatManager {
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         
-        if isSelfOrCapabilityQuery(output) {
+        let hasComparativeTerm = output.localizedCaseInsensitiveContains("compared") ||
+                                 output.localizedCaseInsensitiveContains("versus") ||
+                                 output.localizedCaseInsensitiveContains(" vs ") ||
+                                 output.localizedCaseInsensitiveContains(" vs. ") ||
+                                 output.localizedCaseInsensitiveContains("compare")
+        
+        if isSelfOrCapabilityQuery(output) && !hasComparativeTerm {
             return ""
+        }
+        
+        // Common typo / spelling corrections for tech and AI terms
+        let commonCorrections: [(String, String)] = [
+            (#"(?i)\bchatpgt\b"#, "ChatGPT"),
+            (#"(?i)\bchatgbt\b"#, "ChatGPT"),
+            (#"(?i)\bchatgdp\b"#, "ChatGPT"),
+            (#"(?i)\bchagpt\b"#, "ChatGPT"),
+            (#"(?i)\bgemmini\b"#, "Gemini"),
+            (#"(?i)\bgimini\b"#, "Gemini"),
+            (#"(?i)\bclade\b"#, "Claude"),
+            (#"(?i)\bcloude\b"#, "Claude"),
+            (#"(?i)\bdeepsek\b"#, "DeepSeek"),
+            (#"(?i)\bdeekseek\b"#, "DeepSeek"),
+            (#"(?i)\bopena\b"#, "OpenAI"),
+            (#"(?i)\bopenrouter\b"#, "OpenRouter"),
+            (#"(?i)\blmstudio\b"#, "LM Studio")
+        ]
+        for (pattern, replacement) in commonCorrections {
+            output = output.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
         }
         
         let leadingPatterns = [
             #"(?i)^please\s+"#,
             #"(?i)^(?:can|could|would|will)\s+you\s+(?:please\s+)?"#,
+            #"(?i)^how\s+(?:smart|capable|good|fast|powerful|accurate|advanced)\s+(?:are\s+(?:you|u|they|models?)|is\s+(?:it|this\s+model|the\s+model))\s+(?:compared\s+to|vs\.?|versus|against)?\s*"#,
+            #"(?i)^how\s+do\s+(?:you|u)\s+compare\s+(?:to|with|against)\s*"#,
+            #"(?i)^compare\s+(?:yourself\s+with|yourself\s+to|you\s+with|you\s+to|u\s+with|u\s+to)\s*"#,
+            #"(?i)^i(?:'m|\s+am|\s+m)?\s+(?:gonna|going\s+to|planning\s+to|having|eating|taking|consuming)\s+(?:have|eat|take|consume)?\s*"#,
+            #"(?i)^(?:i\s+have|i\s+got|i've\s+got)\s+"#,
+            #"(?i)^(?:calculate|compute|estimate|find|get|check|give\s+me|tell\s+me|show\s+me|what\s+are)\s+(?:the\s+)?(?:macros?|macro\s+breakdown|calories?|nutrition(?:al)?\s+(?:values?|facts?)|breakdown)\s+(?:for|of)?\s*"#,
             #"(?i)^i\s+(?:want|wanna|need)\s+(?:you\s+)?to\s+(?:know|find|check|research|explain|look\s+up|list(?:\s+me)?(?:\s+out)?|tell\s+me)\s+"#,
             #"(?i)^i\s+(?:want|wanna|need)\s+to\s+(?:know|find|check|research|look\s+up)\s+"#,
             #"(?i)^(?:search|research|google|look\s+up|find\s+out|find)\s+(?:the\s+web\s+)?(?:for\s+)?"#,
@@ -5849,17 +6359,32 @@ public final class ChatManager {
             #"(?i)^(?:who|what|where|when|why|how|which)\s+(?:is|are|was|were|does|do|did|can|could|should|would)\s+"#,
             #"(?i)^(?:what\s+are\s+the|what\s+is\s+the|who\s+are\s+the)\s+"#,
             #"(?i)^(?:what\s+else\s+can\s+(?:you|u)\s+do)\b"#,
-            #"(?i)^(?:what\s+can\s+(?:you|u)\s+do)\b"#
+            #"(?i)^(?:what\s+can\s+(?:you|u)\s+do)\b"#,
+            #"(?i)^(?:changes?|differences?)\s+(?:between|in|of)\s+"#,
+            #"(?i)^(?:what(?:'s|\s+is)\s+new\s+in)\s+"#,
+            #"(?i)^(?:what\s+changed\s+in)\s+"#,
+            #"(?i)^(?:compare|contrast)\s+"#
         ]
         for pattern in leadingPatterns {
             output = output.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
         }
+        
+        let inlinePatterns: [(String, String)] = [
+            (#"(?i)\b(?:are\s+u|are\s+you|do\s+u|do\s+you|can\s+u|can\s+you)\b"#, ""),
+            (#"(?i)\b(?:latest\s+ones)\b"#, "latest")
+        ]
+        for (pattern, replacement) in inlinePatterns {
+            output = output.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
+        }
+        
         let trailingPatterns = [
             #"(?i)\s+(?:and\s+)?(?:include|provide|list)\s+(?:the\s+)?(?:sources?|citations?)(?:\s+links?)?.*$"#,
             #"(?i)\s+(?:and\s+)?cite\s+(?:the\s+)?sources?.*$"#,
             #"(?i)\s+(?:in|as)\s+(?:a\s+)?(?:table|bullet\s+list|short\s+answer|detailed\s+answer).*$"#,
             #"(?i)\s+(?:and\s+)?(?:summari[sz]e|explain)\s+(?:the\s+)?(?:results?|findings?).*$"#,
-            #"(?i)\s+(?:and\s+)?tell\s+me\s+(?:what\s+you\s+found|the\s+answer).*$"#
+            #"(?i)\s+(?:and\s+)?tell\s+me\s+(?:what\s+you\s+found|the\s+answer).*$"#,
+            #"(?i)\s+(?:and\s+)?(?:give|tell|calculate|compute|estimate|show|what\s+are)\s+(?:me\s+)?(?:the\s+)?(?:macros?|macro\s+breakdown|calories?|nutrition(?:al)?\s+values?|nutrition\s+facts?).*$"#,
+            #"(?i)\s+(?:macros?|nutrition|calories?)\s*(?:please|breakdown|info)?$"#
         ]
         for pattern in trailingPatterns {
             output = output.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
@@ -5943,7 +6468,8 @@ public final class ChatManager {
                 "\(modelName) hardware requirements VRAM GGUF MLX"
             ]
         case .nutrition:
-            return ["\(subject) USDA FoodData Central nutrition per 100 g calories protein carbohydrates fat"]
+            let cleanSubj = cleanedSearchSubject(subject)
+            return ["\(cleanSubj) USDA nutrition facts per 100g calories protein carbohydrates fat"]
         case .health:
             return [
                 "\(subject) clinical guideline NIH CDC WHO",
@@ -5999,10 +6525,106 @@ public final class ChatManager {
     }
 
     /// Convert a search seed into high-quality, targeted web queries.
-    /// Prioritizes the AI's exact selected query directly without distortion.
+    /// Decomposes multi-entity or comparative queries into focused parallel searches.
     nonisolated private static func focusedSearchQueries(seedQuery: String, originalRequest: String) -> [String] {
         let cleanSeed = cleanedSearchSubject(seedQuery)
         let primaryQuery = cleanSeed.isEmpty ? seedQuery : cleanSeed
+        let currentYear = Calendar.current.component(.year, from: Date())
+        
+        let recognizedAIEntities = [
+            "ChatGPT", "GPT-4o", "GPT-4", "Gemini", "Claude",
+            "DeepSeek", "Llama", "Mistral", "Qwen", "Apple Intelligence", "Grok"
+        ]
+        
+        let combined = "\(primaryQuery) \(originalRequest)"
+        var foundEntities: [String] = []
+        for entity in recognizedAIEntities {
+            let pattern = #"(?i)\b\#(entity)\b"#
+            if combined.range(of: pattern, options: .regularExpression) != nil {
+                if !foundEntities.contains(entity) {
+                    foundEntities.append(entity)
+                }
+            }
+        }
+        
+        if foundEntities.count >= 2 {
+            var entityQueries: [String] = []
+            for entity in foundEntities.prefix(2) {
+                entityQueries.append("\(entity) latest capabilities benchmarks \(currentYear)")
+            }
+            entityQueries.append("\(foundEntities[0]) vs \(foundEntities[1]) comparison")
+            return entityQueries
+        } else if foundEntities.count == 1 {
+            let entity = foundEntities[0]
+            let isBenchmarkOrCapability = combined.localizedCaseInsensitiveContains("benchmark") ||
+                                          combined.localizedCaseInsensitiveContains("smart") ||
+                                          combined.localizedCaseInsensitiveContains("capable") ||
+                                          combined.localizedCaseInsensitiveContains("capability") ||
+                                          combined.localizedCaseInsensitiveContains("compare")
+            if isBenchmarkOrCapability {
+                return [
+                    "\(entity) latest capabilities benchmarks \(currentYear)",
+                    primaryQuery
+                ]
+            }
+        }
+        
+        let originalLower = originalRequest.lowercased()
+        let isChangelog = originalLower.contains("change") || originalLower.contains("difference") ||
+                          originalLower.contains("what's new") || originalLower.contains("whats new") ||
+                          originalLower.contains("release note") || originalLower.contains("changelog")
+        let isBenchmark = originalLower.contains("benchmark") || originalLower.contains("performance") ||
+                          originalLower.contains("speed") || originalLower.contains("fps")
+        
+        // Multi-subject comparison "A and B", "A vs B"
+        let vsPattern = #"(?i)^(.+?)\s+(?:vs\.?|versus|compared\s+to|against)\s+(.+)$"#
+        if let regex = try? NSRegularExpression(pattern: vsPattern) {
+            let nsString = primaryQuery as NSString
+            if let match = regex.firstMatch(in: primaryQuery, range: NSRange(location: 0, length: nsString.length)) {
+                var firstPart = nsString.substring(with: match.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                var secondPart = nsString.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                firstPart = cleanedSearchSubject(firstPart)
+                
+                // Inherit entity context if second part is a minor suffix (e.g. "beta 2" when first is "gptk 4 beta 1")
+                let firstWords = firstPart.components(separatedBy: " ")
+                let secondWords = secondPart.components(separatedBy: " ")
+                if firstWords.count > secondWords.count && secondWords.count <= 2 {
+                    let sharedWord = secondWords[0].lowercased()
+                    if let indexInFirst = firstWords.firstIndex(where: { $0.lowercased() == sharedWord }), indexInFirst > 0 {
+                        let entityPrefix = firstWords[..<indexInFirst].joined(separator: " ")
+                        secondPart = "\(entityPrefix) \(secondPart)"
+                    } else if !firstWords.isEmpty {
+                        let entityPrefix = firstWords[0]
+                        if !secondPart.lowercased().contains(entityPrefix.lowercased()) {
+                            secondPart = "\(entityPrefix) \(secondPart)"
+                        }
+                    }
+                }
+                
+                let querySuffix: String
+                let itemSuffix: String
+                if isChangelog {
+                    querySuffix = "changes changelog release notes"
+                    itemSuffix = "release notes"
+                } else if isBenchmark {
+                    querySuffix = "benchmarks comparison"
+                    itemSuffix = "benchmarks"
+                } else {
+                    querySuffix = "comparison"
+                    itemSuffix = "specs"
+                }
+                
+                if !firstPart.isEmpty && !secondPart.isEmpty {
+                    return [
+                        "\(firstPart) vs \(secondPart) \(querySuffix)".trimmingCharacters(in: .whitespaces),
+                        "\(firstPart) \(itemSuffix)".trimmingCharacters(in: .whitespaces),
+                        "\(secondPart) \(itemSuffix)".trimmingCharacters(in: .whitespaces)
+                    ]
+                }
+            }
+        }
+        
         return [primaryQuery]
     }
 
@@ -6067,6 +6689,7 @@ public final class ChatManager {
         let successfulQueries: [String]
         let coverage: String
         let uncoveredQueries: [String]
+        let querySources: [[String: Any]]
     }
 
     /// Search both providers, favor independent domains, and fetch the result
@@ -6076,7 +6699,7 @@ public final class ChatManager {
     /// what the model may use for factual claims.
     private func searchWeb(queries: [String], allowAutomaticRefinement: Bool) async -> WebSearchOutcome {
         guard !queries.isEmpty else {
-            return WebSearchOutcome(success: false, text: "No focused search query was produced.", verifiedSourceCount: 0, domains: [], queriesUsed: [], successfulQueries: [], coverage: "none", uncoveredQueries: [])
+            return WebSearchOutcome(success: false, text: "No focused search query was produced.", verifiedSourceCount: 0, domains: [], queriesUsed: [], successfulQueries: [], coverage: "none", uncoveredQueries: [], querySources: [])
         }
 
         var queriesUsed = queries
@@ -6103,7 +6726,7 @@ public final class ChatManager {
             return indexed.sorted { $0.0 < $1.0 }.map { (query: $0.1, results: $0.2) }
         }
         guard resultsByQuery.contains(where: { !$0.results.isEmpty }) else {
-            return WebSearchOutcome(success: false, text: "No search provider returned usable results.", verifiedSourceCount: 0, domains: [], queriesUsed: queriesUsed, successfulQueries: [], coverage: "none", uncoveredQueries: queries)
+            return WebSearchOutcome(success: false, text: "No search provider returned usable results.", verifiedSourceCount: 0, domains: [], queriesUsed: queriesUsed, successfulQueries: [], coverage: "none", uncoveredQueries: queries, querySources: [])
         }
 
         let resultsPerQuery = max(4, 12 / max(1, queries.count))
@@ -6213,7 +6836,7 @@ public final class ChatManager {
         }
 
         guard !verified.isEmpty else {
-            return WebSearchOutcome(success: false, text: "Search returned pages, but none contained enough query-relevant fetched evidence to support the request.", verifiedSourceCount: 0, domains: [], queriesUsed: queriesUsed, successfulQueries: [], coverage: "none", uncoveredQueries: queries)
+            return WebSearchOutcome(success: false, text: "Search returned pages, but none contained enough query-relevant fetched evidence to support the request.", verifiedSourceCount: 0, domains: [], queriesUsed: queriesUsed, successfulQueries: [], coverage: "none", uncoveredQueries: queries, querySources: [])
         }
         verified = Array(verified.prefix(10))
         let domains = verified.compactMap { URL(string: $0.url)?.host?.replacingOccurrences(of: "www.", with: "") }
@@ -6229,7 +6852,15 @@ public final class ChatManager {
         let formatted = verified.map { result in
             "- Title: \(result.title)\n  Evidence query: \(queryByURL[result.url] ?? queries[0])\n  Snippet: \(result.snippet)\n  URL: \(result.url)\n  Fetched evidence: \(result.evidence)"
         }.joined(separator: "\n\n")
-        return WebSearchOutcome(success: true, text: formatted, verifiedSourceCount: verified.count, domains: domains, queriesUsed: queriesUsed, successfulQueries: successfulQueries, coverage: coverage, uncoveredQueries: uncoveredQueries)
+
+        var querySourcesList: [[String: Any]] = []
+        for q in queriesUsed {
+            let matched = verified.filter { (queryByURL[$0.url] ?? queries.first) == q }
+            let sources = matched.map { ["title": $0.title, "url": $0.url] }
+            querySourcesList.append(["query": q, "sources": sources])
+        }
+
+        return WebSearchOutcome(success: true, text: formatted, verifiedSourceCount: verified.count, domains: domains, queriesUsed: queriesUsed, successfulQueries: successfulQueries, coverage: coverage, uncoveredQueries: uncoveredQueries, querySources: querySourcesList)
     }
 
     nonisolated private static func fetchEvidence(
@@ -6953,7 +7584,11 @@ public final class ChatManager {
     public func addManualMemoryNode(label: String, category: String, sourceNodeId: String = "user", targetNodeId: String? = nil, edgeLabel: String? = nil) {
         let cleanLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanLabel.isEmpty else { return }
-        let slug = cleanLabel.lowercased().replacingOccurrences(of: " ", with: "_")
+        // Sanitize: lowercase, replace spaces with underscores, strip non-alphanumeric/underscore chars
+        let slug = cleanLabel.lowercased()
+            .replacingOccurrences(of: " ", with: "_")
+            .replacingOccurrences(of: "[^a-z0-9_]", with: "", options: .regularExpression)
+        guard !slug.isEmpty else { return }
         
         let node = MemoryNode(id: slug, label: cleanLabel, category: category)
         if let idx = globalMemoryNodes.firstIndex(where: { $0.id == slug }) {
@@ -7069,9 +7704,12 @@ public final class ChatManager {
                     throw NSError(domain: "GeminiError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid JSON response"])
                 }
                 
-            case .lmStudio:
-                let baseURL = self.lmStudioBaseURL
-                let modelId = thread.lmStudioModelId ?? self.lmStudioAvailableModels.first ?? "default"
+            case .lmStudio, .mlx:
+                let isMLX = thread.provider == .mlx
+                let baseURL = isMLX ? self.mlxBaseURL : self.lmStudioBaseURL
+                let modelId = isMLX
+                    ? (thread.mlxModelId ?? self.mlxModelId ?? self.mlxScanner.models.first?.id ?? "default")
+                    : (thread.lmStudioModelId ?? self.lmStudioAvailableModels.first ?? "default")
                 guard let url = URL(string: "\(baseURL)/chat/completions") else { throw URLError(.badURL) }
                 var request = URLRequest(url: url)
                 request.httpMethod = "POST"
@@ -7093,7 +7731,8 @@ public final class ChatManager {
                    let content = message["content"] as? String {
                     summary = content.trimmingCharacters(in: .whitespacesAndNewlines)
                 } else {
-                    throw NSError(domain: "LMStudioError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid JSON response"])
+                    let errDomain = isMLX ? "MLXError" : "LMStudioError"
+                    throw NSError(domain: errDomain, code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid JSON response"])
                 }
                 
             case .openRouter:

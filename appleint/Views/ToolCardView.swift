@@ -8,11 +8,11 @@ struct ToolCardView: View {
             VStack(alignment: .leading, spacing: 0) {
                 // Modern Apple-Native Header Bar
                 HStack(alignment: .center, spacing: 12) {
-                    Image(systemName: request.type == "file_system" ? "folder.fill" : (request.type == "advanced_memory" ? "brain.head.profile" : "slider.horizontal.3"))
+                    Image(systemName: request.type == "file_system" ? "folder.fill" : (request.type == "apple_notes" ? "note.text" : (request.type == "advanced_memory" ? "brain.head.profile" : "slider.horizontal.3")))
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(request.type == "advanced_memory" ? Color.secondary : Color.blue)
+                        .foregroundStyle(request.type == "advanced_memory" ? Color.secondary : (request.type == "apple_notes" ? Color.yellow : Color.blue))
                         .frame(width: 28, height: 28)
-                        .background(request.type == "advanced_memory" ? Color.secondary.opacity(0.12) : Color.blue.opacity(0.12))
+                        .background(request.type == "advanced_memory" ? Color.secondary.opacity(0.12) : (request.type == "apple_notes" ? Color.yellow.opacity(0.15) : Color.blue.opacity(0.12)))
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     
                     VStack(alignment: .leading, spacing: 2) {

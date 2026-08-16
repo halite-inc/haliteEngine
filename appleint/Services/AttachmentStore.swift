@@ -21,9 +21,17 @@ final class AttachmentStore: AttachmentStoring {
         )
     }
 
+    /// Maximum attachment size in bytes (50 MB). Larger payloads are rejected
+    /// to prevent transient memory spikes from bulk drag-and-drop of huge images.
+    private static let maxAttachmentBytes = 50 * 1024 * 1024
+
     func store(dataURL: String) -> UUID? {
         let id = UUID()
         guard let data = dataURL.data(using: .utf8) else { return nil }
+        guard data.count <= Self.maxAttachmentBytes else {
+            print("AttachmentStore: rejected attachment (\(data.count / 1_048_576) MB) exceeding \(Self.maxAttachmentBytes / 1_048_576) MB limit.")
+            return nil
+        }
         do {
             try data.write(to: fileURL(for: id), options: .atomic)
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL(for: id).path)

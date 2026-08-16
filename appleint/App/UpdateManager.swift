@@ -374,8 +374,16 @@ public final class UpdateManager: ObservableObject {
         let clean1 = v1.trimmingCharacters(in: CharacterSet(charactersIn: "vV")).trimmingCharacters(in: .whitespacesAndNewlines)
         let clean2 = v2.trimmingCharacters(in: CharacterSet(charactersIn: "vV")).trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let parts1 = clean1.split(separator: ".").compactMap { Int($0) }
-        let parts2 = clean2.split(separator: ".").compactMap { Int($0) }
+        // Split off pre-release suffix (e.g. "1.0.1-beta.2" -> "1.0.1", "beta.2")
+        let components1 = clean1.split(separator: "-", maxSplits: 1)
+        let components2 = clean2.split(separator: "-", maxSplits: 1)
+        let numeric1 = String(components1.first ?? "")
+        let numeric2 = String(components2.first ?? "")
+        let isPrerelease1 = components1.count > 1
+        let isPrerelease2 = components2.count > 1
+
+        let parts1 = numeric1.split(separator: ".").compactMap { Int($0) }
+        let parts2 = numeric2.split(separator: ".").compactMap { Int($0) }
 
         let count = max(parts1.count, parts2.count)
         for i in 0..<count {
@@ -384,6 +392,8 @@ public final class UpdateManager: ObservableObject {
             if p1 > p2 { return true }
             if p1 < p2 { return false }
         }
+        // Numeric parts are equal; a release (no suffix) is newer than a pre-release
+        if !isPrerelease1 && isPrerelease2 { return true }
         return false
     }
 
